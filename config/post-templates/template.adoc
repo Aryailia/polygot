@@ -1,0 +1,26 @@
+// api_set_lang: en
+:title: 
+// api_set_lang: jp
+:title: 
+// api_set_lang: zh
+:title: 
+// api_set_lang: ALL
+:author:       <!-- INSERT: author -->
+:date-created: <!-- INSERT: today -->
+:date-updated: <!-- INSERT: today -->
+:tags:         
+
+// api_set_lang: en
+== First section
+Start here
+
+
+// api_set_lang: jp
+== 第一話
+
+ここから始まります
+
+// api_set_lang: zh
+== 第一个话题
+
+從此開始

@@ -1,0 +1,153 @@
+#!/usr/bin/env sh
+
+#export adoc_sourced=true
+
+#adoc_compile() {
+#  # &0: 
+#  # $1: Write path to table-of-contents file hunk
+#  # $2: Write path to main-content file hunk
+#
+#  # Probably should use `adoc_include_by_tag` instead of printing an include
+#  <&0 asciidoctor - --out-file - \
+#      --attribute toc --attribute toc-title="" \
+#      --no-header-footer \
+#    | adoc_Split2 "${1}" "${2}"
+#}
+
+adoc_To_htmL() {
+  # &0: Post
+  <&0 asciidoctor - --out-file - \
+      --attribute toc --attribute toc-title="" \
+      --no-header-footer
+}
+
+adoc_Split() {
+  # &0: Original markup post to extract from
+  # $1: Write path to table-of-contents file hunk
+  # $2: Write path to main-content file hunk
+
+  # Eat the first line of input and test if there is a toc
+  IFS= read -r _adoc_split_line
+  if [ "${_adoc_split_line}" != "${_adoc_split_line#<div id=\"toc\"}" ]; then
+    {
+      _adoc_split_entry=''
+      _adoc_split_count='1'
+
+      printf %s\\n "${_adoc_split_line}"
+      while IFS= read -r _adoc_split_line; do
+        # Signal start for counting toc
+        _adoc_split_entry="${_adoc_split_line}"
+        while [ "${_adoc_split_entry}" != "${_adoc_split_entry#*<div}" ]; do
+          _adoc_split_entry="${_adoc_split_line#*<div}"
+          _adoc_split_count="$(( _adoc_split_count + 1 ))"
+        done
+
+        _adoc_split_entry="${_adoc_split_line}"
+        while [ "${_adoc_split_entry}" != "${_adoc_split_entry#*</div}" ]; do
+          _adoc_split_entry="${_adoc_split_line#*</div}"
+          _adoc_split_count="$(( _adoc_split_count - 1 ))"
+        done
+
+        printf %s\\n "${_adoc_split_line}"
+        if [ "${_adoc_split_count}" -le 0 ]; then
+          break
+        fi
+      done
+    } >"${1}"
+
+    # print the table of contents
+    while IFS= read -r _adoc_split_line; do
+      _adoc_split_count="$(( _adoc_split_count + 1 ))"
+      printf %s\\n "${_adoc_split_line}"
+    done >"${2}"
+  else
+    printf "" >"${1}"
+    {
+      # Just print out the entire file
+      printf %s\\n "${_adoc_split_line}"
+      cat -
+      #while IFS= read -r _adoc_split_line; do
+      #  printf %s\\n "${_adoc_split_line}"
+      #done
+    } >"${2}"
+  fi
+}
+
+#adoc_Split2() {
+#  # &0: Original markup post to extract from
+#  # $1: Write path to main-content file hunk
+#  # $2: Write path to table-of-contents file hunk
+#  _adoc_split_entry=''
+#  _adoc_split_count=''
+#  while IFS= read -r _adoc_split_line; do
+#    if [ "${_adoc_split_line}" != "${_adoc_split_line#<div id=\"toc\"}" ]; then
+#      _adoc_split_count='1'
+#      break
+#    else
+#      printf %s\\n "${_adoc_split_line}"
+#    fi
+#  done >"${1}"
+#
+#  if [ -n "${_adoc_split_count}" ]; then
+#    printf %s\\n "${_adoc_split_line}"
+#    while IFS= read -r _adoc_split_line; do
+#      # Signal start for counting toc
+#      _adoc_split_entry="${_adoc_split_line}"
+#      while [ "${_adoc_split_entry}" != "${_adoc_split_entry#*<div}" ]; do
+#        _adoc_split_entry="${_adoc_split_line#*<div}"
+#        _adoc_split_count="$(( _adoc_split_count + 1 ))"
+#      done
+#
+#      _adoc_split_entry="${_adoc_split_line}"
+#      while [ "${_adoc_split_entry}" != "${_adoc_split_entry#*</div}" ]; do
+#        _adoc_split_entry="${_adoc_split_line#*</div}"
+#        _adoc_split_count="$(( _adoc_split_count - 1 ))"
+#      done
+#
+#      if [ "${_adoc_split_count}" -gt 0 ]
+#        then printf %s\\n "${_adoc_split_line}"
+#        else break
+#      fi
+#    done
+#  fi >"${2}"
+#
+#  while IFS= read -r _adoc_split_line; do
+#    _adoc_split_count="$(( _adoc_split_count + 1 ))"
+#    printf %s\\n "${_adoc_split_line}"
+#  done >>"${1}"
+#}
+
+
+
+
+case "${1}"
+  in frontmatter)
+    <&0 sed -ne '/^:[A-Za-z0-9_-]\+:/{
+      s/ *$//
+      s/^://
+      s/: */:/
+      p
+    }'
+  ;; compile) <&0 adoc_To_htmL | adoc_Split "${2}" "${3}"
+  ;; to_html) <&0 adoc_To_htmL
+  ;; split)   <&0 adoc_Split "${2}" "${3}"
+  ;; comment) printf '//'
+  ;; *)     exit 1
+esac
+#<"${1}" adoc_Split a b
+
+#split() {
+#   printf %s "${_adoc_split_line}"
+#  printf %s\\n "${_adoc_split_count}"
+#  _length="$( awk '
+#    /^<div id="toc" .*>$/ { start = 1; }
+#    (start && count >= 0) {
+#      temp = $0;
+#      count = count + gsub(/<div/, "", temp) - gsub(/<\/div *>/, "", temp)
+#    }
+#    (start && count <= 0) { print NR; exit; }
+#  ' )"
+#  [ -z "${_length}" ] && { printf %s\\n "No table of contents found"; exit 1; }
+#  sed "${_length}q" "${1}"
+#  sed "1,${_length}d" "${1}"
+#}
