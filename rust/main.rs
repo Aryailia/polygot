@@ -3,12 +3,15 @@ use chrono::offset::Local;
 use filetime::{set_file_mtime, FileTime};
 use std::{
     env,
+    fs,
     io::ErrorKind,
     path::Path,
     process::exit,
     str::Chars,
 };
 
+mod post;
+use post::Post;
 
 const NAME: &str = "blog";
 
@@ -60,6 +63,25 @@ fn main() {
         }
         3, "sync-last-updated-of-first-to" => {
             sync_last_updated(args.get(1).unwrap(), args.get(2).unwrap());
+        }
+        4, "parse-lang-markup" => {
+            let source = args.get(1).unwrap();
+            let cache_dir = Path::new(args.get(2).unwrap());
+            let api = args.get(3).unwrap();
+            if !Path::new(api).is_file() {
+                Path::new(api).metadata()
+                    .map_err(|err| format!("'{}' {}", api, err))
+                    .or_die(1);
+            }
+
+            //run: time cargo run parse-lang-markup a . b
+            let _stem = Path::new(source).file_stem();
+            let file = fs::read_to_string(source)
+                .map_err(|err| format!("{:?} {}", source, err))
+                .or_die(1);
+            Post::new_multi_lang(file.as_str()).views.iter().for_each(|view| {
+                println!("==== {:?}\n{:?}\n", view.lang, view.body.join(""));
+            });
         }
     });
 }
