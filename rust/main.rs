@@ -11,6 +11,8 @@ use std::{
 };
 
 mod post;
+mod fileapi;
+use fileapi::FileApi;
 use post::Post;
 
 const NAME: &str = "blog";
@@ -67,14 +69,13 @@ fn main() {
         4, "parse-lang-markup" => {
             let source = args.get(1).unwrap();
             let cache_dir = Path::new(args.get(2).unwrap());
-            let api = args.get(3).unwrap();
-            if !Path::new(api).is_file() {
-                Path::new(api).metadata()
-                    .map_err(|err| format!("'{}' {}", api, err))
+            let api_dir = args.get(3).unwrap();
+            if !Path::new(api_dir).is_file() {
+                Path::new(api_dir).metadata()
+                    .map_err(|err| format!("'{}' {}", api_dir, err))
                     .or_die(1);
             }
 
-            //run: time cargo run parse-lang-markup a . b
             let _stem = Path::new(source).file_stem();
             let file = fs::read_to_string(source)
                 .map_err(|err| format!("{:?} {}", source, err))
@@ -83,7 +84,14 @@ fn main() {
                 println!("==== {:?}\n{:?}\n", view.lang, view.body.join(""));
             });
         }
+
+        //run: time cargo run test
+        1, "test" => {
+            let api = FileApi::from_filename("hello.adoc", "../config/api").unwrap();
+            println!("{:?}", api.comment());
+        }
     });
+
 }
 
 fn sync_last_updated(first: &String, date_source: &String) -> ! {
