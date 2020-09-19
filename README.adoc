@@ -1,0 +1,46 @@
+:toc:
+
+== Description
+
+A static site generator built with POSIX shell for ease of customisability. Supports Markdown and Asciidoctor out of the box, other formats are easily extensible.
+
+== Design Goals
+
+=== Reader-facing
+* Static site generation
+* Tags
+* Automatic RSS/Atom feed generation from blog posts
+* Table of contents in sidebar
+* All major features supported without JavaScript
+
+=== Writer-facing
+
+* Able to use any markup format you wish (md, adoc, org, etc.). Supporting a file format requires implementing a simple api in link:config/api[]
+
+* Specify by output file locations via frontmatter, e.g. "\{year}/\{month}\{day}/\{filename}"
+* Write multilingual posts with languages side by side in the source files for easy comparison.
+* Support for shared navbar and footer etc. See usage of link:config/combine.sh[] in link:build.sh[]
+* Builds sass/lass out of the box. Compilation is quite easy to customise (edit link:build.sh[])
+
+== Why not just use a Makefile
+
+Two of the subcommands of the rust portion of the code are dedicated to comparing and setting the 'last updated' metadata of files.{wj}footnote:[This could have also been implemented with `touch -m` which is POSIX, but some platforms do not come with touch out of the box.]{wj}footnote:["link:https://pubs.opengroup.org/onlinepubs/9699919799/idx/utilities.html[POSIX.1-2017: Utilities]". IEEE and The Open Group. 2017. Last Accessed: 2020-09-18.]
+This and the entirety of link:build.sh[build.sh] duplicate Makefile functionality.{wj}footnote:["link:https://stackoverflow.com/questions/1789705/[How does make know which files to update]" Stack Exchange, Inc. Last Accessed: 2020-09-18.]
+I do this because:
+
+* The original design of using primarily POSIX is to make this easily customisable and portable.
+Although POSIX shellscript is a bad language, it requires no setup on POSIX machines (and just installing git-scm on Windows).
+As this is a CLI tool, there is no need to learn any other language to customise this.
+
+* Ideally we be writing build scripts in real programming languages (not even POSIX shell), not adding needless complication with more syntax to learn. Again, one less language to learn.
+
+* I may be wrong, but there is no way to really recursively traverse a directory tree and compile all the files in said tree.
+
+== Similar static-site blog generators
+
+TODO: Review links
+
+- https://kristaps.bsd.lv/lowdown/
+- https://gitlab.com/uoou/blop/
+- https://github.com/henriqueleng/shite
+- https://github.com/kisom/rawk/ A reference to surfraw and the metal band RATM.
