@@ -7,10 +7,10 @@ mod fileapi;
 mod post;
 mod custom_errors;
 mod traits;
-//mod frontmatter;
+mod frontmatter;
 use fileapi::FileApi;
 use post::Post;
-//use frontmatter::Frontmatter;
+use frontmatter::Frontmatter;
 use traits::*;
 
 const NAME: &str = "blog";
@@ -111,13 +111,13 @@ fn compile_post(text: String, api: &FileApi, filename: &str) {
     post.views.iter().for_each(|view| {
         println!("###### {} ######", view.lang.unwrap_or("All"));
         //println!("{}", view.body.join(""));
-        let frontmatter_string = api.frontmatter(&view.body).or_die(1);
-        println!("{}", frontmatter_string);
+        //let frontmatter_string = api.frontmatter(&view.body).or_die(1);
         let frontmatter_string = r"hello: a
-tags: a d b d
+tags: a d b
 ".to_string();
-        //let frontmatter = Frontmatter::new(frontmatter_string.as_str()).unwrap();
-        //println!("{}", frontmatter.serialise());
+        //println!("{}", frontmatter_string);
+        let frontmatter = Frontmatter::new(frontmatter_string.as_str()).unwrap();
+        println!("{}", frontmatter.serialise());
         //println!("{}", api.frontmatter(&view.body).unwrap());
     });
 }
