@@ -1,6 +1,10 @@
-type RStr = Range<usize>;
+use crate::fileapi::FileApi;
+//use crate::traits::ResultExt;
+use crate::traits::{BoolExt, RangeExt, VecExt, RStr};
+use std::mem::replace;
+
 type WipPart<'a> = (Option<Vec<&'a str>>, RStr);
-const API_SET_LANGUAGE: &'static str = "api_set_lang:";
+const API_SET_LANGUAGE: &str = "api_set_lang:";
 const ALL_LANG: Option<&str> = None;
 
 // https://cfsamson.github.io/books-futures-explained/4_pin.html
@@ -19,104 +23,95 @@ pub struct PostView<'a> {
 }
 
 impl<'a> Post<'a> {
-    pub fn new_multi_lang(original: &'a str) -> Self {
-        let original_len = original.len();
-        let split = (0..original_len).split(original);
-        // TODO: capacity for 'unique_langs' and 'sections'?
-        let mut unique_langs: Vec<&str> = Vec::new();
-        let mut sections: Vec<WipPart> = Vec::new();
-        for (_row, (range, _)) in split.enumerate() {
-            let line = range.of(original);
-            // Three cases:
-            // 1. Line we are processing is a compile flag
-            if let Some(language_str) = find_config_key_end(line) {
-                // Extracts post-colon 'api_set_lang: en all jp'
-                // Lines may belong to many languages
-                let (has_all_tag, langs_given) = analyse_langs(language_str);
+    pub fn new(text: &'a str, api: &FileApi) -> Result<Self, String> {
+        let marker = api.comment()?;
+        let marker = marker.as_str();
+        // 'lang_max_count' will count all duplicates (which is the common case)
+        // e.g. api_set_lang: en jp
+        //      api_set_lang: ALL
+        //      api_set_lang: en
+        // counts four
+        // It might just be better to let 'unique_langs' auto size
+        let (section_count, lang_max_count) = text
+            .lines()
+            // TODO: rename find_config_key_end
+            .filter_map(|line| find_config_key_end(line, marker))
+            .map(|body| body.split_whitespace().count())
+            .fold((1, 0), |(count, sum), to_add| (count + 1, sum + to_add));
+
+        let mut unique_langs = Vec::with_capacity(lang_max_count);
+        let mut parts = Vec::with_capacity(section_count);
+        let mut toadd_lang = None;
+        let mut toadd_rstr = 0..0;
+        for (row, (range, _)) in (0..text.len()).split(text).enumerate() {
+            let line = range.of(text);
+            if let Some(lang_str) = find_config_key_end(line, marker) {
+                // e.g. 'api_set_lang: en ALL jp' -> 'en all jp'
+                // May be both all and list languages
+                let (has_all_tag, langs_given) = analyse_langs(lang_str)
+                    .map_err(|err| format!("{}\n  |\n  | {}  |\n= error: {}", row, line, err))?;
                 unique_append(&mut unique_langs, &langs_given);
 
-                // Languages may or may not be specified
-                let languages = if has_all_tag || langs_given.is_empty() {
-                    None
-                } else {
-                    Some(langs_given)
-                };
-                let empty_range_after_newline = range.end ..range.end;
-                sections.push((languages, empty_range_after_newline));
-
-            // 2. No compile flag as is first line
-            } else if sections.is_empty() {
-                sections.push((None, range));
-
-            // 3. Continuing an existing section
+                let languages = (!has_all_tag && !langs_given.is_empty()).to_some(langs_given);
+                parts.push_and_check((
+                    replace(&mut toadd_lang, languages),
+                    replace(&mut toadd_rstr, range.end..range.end),
+                ));
             } else {
-                // Case 2 ensures ths is never negative
-                let last = sections.len() - 1;
-                sections[last].1.expand(range.end);
+                toadd_rstr.expand(range.end);
             }
         }
+        parts.push_and_check((toadd_lang, toadd_rstr));
 
+        // Transpose 'parts' from by parts-by-langs to langs-by-parts (PostView)
         let lang_count = unique_langs.len();
-        let p = sections;
-        let mut data = Vec::with_capacity(lang_count);
-
-        if lang_count <= 1 {
-            let size = p.iter().filter_map(|x| pick_lang(x, "")).count();
-            let mut view = Vec::with_capacity(size);
-            view.extend(p.iter()
-                .filter_map(|x| pick_lang(x, ""))
-                .map(|r| r.of(original)));
-            data.push(PostView {
-                lang: ALL_LANG,
-                body: view,
+        let mut view_list = Vec::with_capacity(std::cmp::max(lang_count, 1));
+        if unique_langs.is_empty() {
+            // For only all lang case, still filter out api_set_lang markup
+            // i.e. use 'parts' not the original 'text'
+            let mut parts_to_str = Vec::with_capacity(parts.len());
+            parts_to_str.extend(parts.iter().map(|(_, range)| range.of(text)));
+            view_list.push_and_check(PostView {
+                lang: None,
+                body: parts_to_str,
             });
         } else {
             for lang in &unique_langs {
-                let size = p.iter().filter_map(|x| pick_lang(x, lang)).count();
+                let size = parts.iter().filter_map(|x| pick_lang(x, lang)).count();
                 let mut view = Vec::with_capacity(size);
-                view.extend(p.iter()
-                    .filter_map(|x| pick_lang(x, lang))
-                    .map(|r| r.of(original)));
-                data.push(PostView {
+                view.extend(
+                    parts
+                        .iter()
+                        .filter_map(|x| pick_lang(x, lang))
+                        .map(|r| r.of(text)),
+                );
+
+                view_list.push_and_check(PostView {
                     lang: Some(lang),
                     body: view,
                 });
             }
         }
-        //data.iter().for_each(|a| a.body.iter().for_each(|b| println!("{}", b.of(original_str))));
 
-        Self {
-            original,
-            views: data,
-            lang_list: unique_langs,
-        }
-    }
-
-    pub fn new_single_lang(text: &'a str) -> Self {
-        Self {
+        Ok(Self {
             original: text,
-            views: vec![PostView {
-                lang: ALL_LANG,
-                body: vec![text],
-            }],
-            lang_list: vec![],
-        }
+            views: view_list,
+            lang_list: unique_langs,
+        })
     }
 }
-
-
 
 /******************************************************************************
  * Post helper functions
  ******************************************************************************/
-fn pick_lang(entry: &WipPart, pick: &str) -> Option<Range<usize>> {
+fn pick_lang(entry: &WipPart, pick: &str) -> Option<RStr> {
     let (maybe_all_langs, range) = entry;
     if let Some(lang_list) = maybe_all_langs {
         if lang_list.iter().all(|lang| *lang != pick) {
             return None;
         }
     }
-    Some(range.start .. range.end) // duplicate because access by reference
+    Some(range.start..range.end) // duplicate because access by reference
 }
 
 fn is_all_lang(tag: &str) -> bool {
@@ -124,18 +119,17 @@ fn is_all_lang(tag: &str) -> bool {
 }
 
 #[inline]
-fn analyse_langs(config_str: &str) -> (bool, Vec<&str>) {
-    let has_all = config_str.split_whitespace().any(is_all_lang);
-    // TODO: add check for valid lang_tag
-    let langs = config_str
-        .split_whitespace()
-        .filter(|lang| !is_all_lang(lang))
-        .collect::<Vec<_>>();
-    //for lang in &langs {
+fn analyse_langs(lang_line: &str) -> Result<(bool, Vec<&str>), String> {
+    let has_all = lang_line.split_whitespace().any(is_all_lang);
+    let mut langs = Vec::with_capacity(lang_line.split_whitespace().count());
+    for l in lang_line.split_whitespace().filter(|l| !is_all_lang(l)) {
+        langs.push_and_check(l);
+        if l.contains(&['/', '\\'][..]) {
+            return Err(format!("{:?} is an invalid tag.", l));
+        }
+    }
 
-    //}
-
-    (has_all, langs)
+    Ok((has_all, langs))
 }
 
 #[inline]
@@ -143,140 +137,37 @@ fn unique_append<'a>(unique: &mut Vec<&'a str>, to_add: &[&'a str]) {
     let always_add = unique.is_empty();
     for lang in to_add {
         if always_add || unique.iter().all(|l| l != lang) {
-            unique.push(lang);
+            unique.push_and_check(lang);
         }
     }
 }
 
-
-fn get_comment_body(line: &str) -> Option<&str> {
+#[inline]
+fn find_config_key_end<'a>(line: &'a str, comment_marker: &str) -> Option<&'a str> {
     let trimmed = line.trim_start();
-    if trimmed.starts_with("//") {
-        Some(&trimmed["//".len()..])
-    } else {
-        None
-    }
-}
-
-
-fn find_config_key_end(line: &str) -> Option<&str> {
-    get_comment_body(line).and_then(|comment| {
-        let body = comment.trim();
-        if body.starts_with(API_SET_LANGUAGE) {
-            Some(&body[API_SET_LANGUAGE.len()..])
-        } else {
-            None
+    if trimmed.starts_with(comment_marker) {
+        let comment_body = trimmed[comment_marker.len()..].trim();
+        if comment_body.starts_with(API_SET_LANGUAGE) {
+            return Some(&comment_body[API_SET_LANGUAGE.len()..]);
         }
-    })
+    }
+    None
 }
 
 trait SubstrToRange {
-    fn range_within(&self, container: &str) -> Range<usize>;
+    fn range_within(&self, container: &str) -> RStr;
 }
 
 impl SubstrToRange for str {
-    fn range_within(&self, container: &str) -> Range<usize> {
+    fn range_within(&self, container: &str) -> RStr {
         let start = self.as_ptr() as usize - container.as_ptr() as usize;
-        start .. start + self.len()
+        start..start + self.len()
     }
 }
-
 
 #[test]
 fn range_within() {
     let a = "     asdf\nsheep ";
     let r = a.trim().range_within(a);
     assert_eq!(&a[r], "asdf\nsheep");
-}
-use std::ops::Range;
-
-//trait RangeExt: std::slice::SliceIndex<str> {
-trait RangeExt {
-    fn of<'a>(&self, original: &'a str) -> &'a str;
-    fn expand(&mut self, till: usize) -> &mut Self;
-    fn split<'a>(&self, original: &'a str) -> RangeSplitInclusive<'a>;
-    fn split_over<'a>(&self,
-        original: &'a str,
-        delimiter: fn(&str) -> RStr,
-    ) -> RangeSplitInclusive<'a>;
-}
-
-
-impl RangeExt for RStr {
-    fn of<'a>(&self, original: &'a str) -> &'a str  {
-        &original[self.start .. self.end]
-    }
-    fn expand(&mut self, till: usize) -> &mut Self {
-        self.end = till;
-        self
-    }
-    fn split<'a>(&self, original: &'a str) -> RangeSplitInclusive<'a> {
-        RangeSplitInclusive {
-            buffer: &original[self.start .. self.end],
-            delimit_by: |substr| {
-                let len = substr.len();
-                substr.find("\n").map(|i| i+1..i+1).unwrap_or(len..len)
-            },
-            index: self.start,
-        }
-    }
-    fn split_over<'a>(&self,
-        original: &'a str,
-        delimit_by: fn(&str) -> RStr,
-    ) -> RangeSplitInclusive<'a> {
-        RangeSplitInclusive {
-            buffer: &original[self.start .. self.end],
-            delimit_by,
-            index: self.start,
-        }
-    }
-}
-
-struct RangeSplitInclusive<'a> {
-    buffer: &'a str,
-    delimit_by: fn(&str) -> RStr,
-    index: usize,
-}
-
-impl<'a> Iterator for RangeSplitInclusive<'a> {
-    type Item = (RStr, RStr);
-    fn next(&mut self) -> Option<Self::Item> {
-        let rel_delim = (self.delimit_by)(self.buffer);
-        let buffer_len = self.buffer.len();
-        //self.a.chars().fold(0, |mut acc, a| {
-        //    println!("({}, {:?})", acc, a);
-        //    acc += a.len_utf8();
-        //    acc
-        //});
-        if buffer_len > 0 {
-            let start = self.index;
-            self.index += rel_delim.end;
-            self.buffer = &self.buffer[rel_delim.end..];
-            let delimiter = rel_delim.start + start..rel_delim.end+start;
-            Some((start..start+rel_delim.start, delimiter))
-        } else {
-            None
-
-        }
-    }
-}
-
-
-
-
-#[test]
-fn split_test() {
-    let body = "hello你\n你how\n are you tody 你好嗎" ;
-    (2..body.len()-6).split(body).for_each(|a| {
-        assert!(a.1.of(body).is_empty());
-        println!("{:?} {:?}", a, a.0.of(body));
-    });
-    println!("===");
-
-    (1..body.len()-6).split_over(body, |substr|
-        substr.find("\n").map(|i| i..i+1).unwrap_or(substr.len()..substr.len())
-    ).for_each(|a| {
-        println!("{:?} {:?} {:?}", a, a.0.of(body), a.1.of(body));
-    })
-        ;
 }

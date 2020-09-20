@@ -1,19 +1,14 @@
 #![allow(dead_code)]
 use chrono::offset::Local;
 use filetime::{set_file_mtime, FileTime};
-use std::{
-    env,
-    fs,
-    io::ErrorKind,
-    path::Path,
-    process::exit,
-    str::Chars,
-};
+use std::{env, fs, io::ErrorKind, path::Path, process::exit, str::Chars};
 
-mod post;
 mod fileapi;
+mod post;
+mod traits;
 use fileapi::FileApi;
 use post::Post;
+use traits::*;
 
 const NAME: &str = "blog";
 
@@ -46,11 +41,10 @@ macro_rules! match_subcommands {
 }
 
 fn main() {
-    let (config, args) = Config::parse_env().or_die(1);
+    let (_config, args) = Config::parse_env().or_die(1);
 
     // run: cargo run compare-last-updated a b
     // run: cargo run sync-last-updated-of-first-to b a
-    // run: time cargo run parse-lang-markup ../config/published/chinese_tones.adoc ../config/api/adoc ../.cache
 
     match_subcommands!(args {
         1, "date-rfc2822" => {
@@ -66,32 +60,56 @@ fn main() {
         3, "sync-last-updated-of-first-to" => {
             sync_last_updated(args.get(1).unwrap(), args.get(2).unwrap());
         }
-        4, "parse-lang-markup" => {
+
+        4, "compile-markup" => {
             let source = args.get(1).unwrap();
-            let cache_dir = Path::new(args.get(2).unwrap());
+            let cache_dir = args.get(2).unwrap();
             let api_dir = args.get(3).unwrap();
+
+            let file = fs::read_to_string(source)
+                .map_err(|err| format!("{:?} {}", source, err))
+                .or_die(1);
+            if !Path::new(cache_dir).is_dir() {
+                Path::new(cache_dir).metadata()
+                    .map_err(|err| format!("'{}' {}", cache_dir, err))
+                    .or_die(1);
+            }
             if !Path::new(api_dir).is_file() {
                 Path::new(api_dir).metadata()
                     .map_err(|err| format!("'{}' {}", api_dir, err))
                     .or_die(1);
             }
 
-            let _stem = Path::new(source).file_stem();
-            let file = fs::read_to_string(source)
-                .map_err(|err| format!("{:?} {}", source, err))
+            let api = FileApi::from_filename(source.as_str(), api_dir.as_str())
                 .or_die(1);
-            Post::new_multi_lang(file.as_str()).views.iter().for_each(|view| {
-                println!("==== {:?}\n{:?}\n", view.lang, view.body.join(""));
-            });
+            let _stem = Path::new(source).file_stem();
+            compile_post(file, &api, source.as_str());
         }
 
-        //run: time cargo run test
         1, "test" => {
             let api = FileApi::from_filename("hello.adoc", "../config/api").unwrap();
             println!("{:?}", api.comment());
         }
     });
+}
 
+fn compile_post(text: String, api: &FileApi, filename: &str) {
+    //let post = Post::new_multi_lang(text.as_str(), &api).or_die(1);
+    let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
+    println!("{}", asdf);
+    println!("########\n# Done #\n########\n");
+    let post = match Post::new(asdf, &api) {
+        Ok(x) => x,
+        Err(err) => {
+            eprintln!("{}{}", filename, err);
+            exit(1);
+        }
+    };
+    post.views.iter().for_each(|view| {
+        println!("###### {} ######", view.lang.unwrap_or("All"));
+        println!("{}", view.body.join(""));
+        //    //println!("{}", api.frontmatter(&view.body).unwrap());
+    });
 }
 
 fn sync_last_updated(first: &String, date_source: &String) -> ! {
@@ -104,7 +122,7 @@ fn sync_last_updated(first: &String, date_source: &String) -> ! {
     exit(0)
 }
 
-fn compare_mtimes(source: &String, target: &String) -> bool {
+fn compare_mtimes(source: &str, target: &str) -> bool {
     let source_date = Path::new(source)
         .metadata()
         .map(|metadata| FileTime::from_last_modification_time(&metadata))
@@ -123,7 +141,6 @@ fn compare_mtimes(source: &String, target: &String) -> bool {
 
     source_date < target_date
 }
-
 
 // Although I could use clap.rs, I want to keep this lean
 #[derive(Debug)]
@@ -146,7 +163,7 @@ impl Config {
         arg_iter.next(); // skip the 0th parameter (path to program running)
         while let Some(arg) = arg_iter.next() {
             if literal || !arg.starts_with('-') {
-                output.push_with_capacity_check(arg);
+                output.push_and_check(arg);
             } else if arg.as_str() == "--" {
                 literal = true;
             } else if arg.as_str() == "-" {
@@ -172,61 +189,6 @@ impl Config {
             }
         }
         Ok((config, output))
-    }
-}
-
-trait VecExt<T> {
-    fn push_with_capacity_check(&mut self, to_push: T);
-}
-
-impl<T: std::fmt::Debug> VecExt<T> for Vec<T> {
-    #[inline]
-    fn push_with_capacity_check(&mut self, to_push: T) {
-        if self.len() >= self.capacity() {
-            panic!("Exceeded capacity {:?}", self);
-        } else {
-            self.push(to_push);
-        }
-    }
-}
-
-trait BoolExt {
-    fn to_some<T>(self, item: T) -> Option<T>;
-    fn or_die(self, msg: String);
-}
-impl BoolExt for bool {
-    #[inline]
-    fn to_some<T>(self, item: T) -> Option<T> {
-        if self {
-            Some(item)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    fn or_die(self, msg: String) {
-        if !self {
-            eprintln!("{}", msg);
-            exit(1)
-        }
-    }
-}
-
-use std::fmt::Display;
-trait ResultExt<T, E: Display> {
-    fn or_die(self, exit_code: i32) -> T;
-}
-
-impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
-    fn or_die(self, exit_code: i32) -> T {
-        match self {
-            Ok(x) => x,
-            Err(err) => {
-                eprintln!("{}", err);
-                exit(exit_code)
-            }
-        }
     }
 }
 
