@@ -5,9 +5,12 @@ use std::{env, fs, io::ErrorKind, path::Path, process::exit, str::Chars};
 
 mod fileapi;
 mod post;
+mod custom_errors;
 mod traits;
+//mod frontmatter;
 use fileapi::FileApi;
 use post::Post;
+//use frontmatter::Frontmatter;
 use traits::*;
 
 const NAME: &str = "blog";
@@ -93,12 +96,12 @@ fn main() {
     });
 }
 
+//run: cargo run compile-markup ../config/published/blue.adoc ../.cache ../config/api
 fn compile_post(text: String, api: &FileApi, filename: &str) {
-    //let post = Post::new_multi_lang(text.as_str(), &api).or_die(1);
-    let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
-    println!("{}", asdf);
-    println!("########\n# Done #\n########\n");
-    let post = match Post::new(asdf, &api) {
+    //let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
+    //println!("{}", text);
+    //println!("########\n# Done #\n########\n");
+    let post = match Post::new(text.as_str(), &api) {
         Ok(x) => x,
         Err(err) => {
             eprintln!("{}{}", filename, err);
@@ -107,8 +110,15 @@ fn compile_post(text: String, api: &FileApi, filename: &str) {
     };
     post.views.iter().for_each(|view| {
         println!("###### {} ######", view.lang.unwrap_or("All"));
-        println!("{}", view.body.join(""));
-        //    //println!("{}", api.frontmatter(&view.body).unwrap());
+        //println!("{}", view.body.join(""));
+        let frontmatter_string = api.frontmatter(&view.body).or_die(1);
+        println!("{}", frontmatter_string);
+        let frontmatter_string = r"hello: a
+tags: a d b d
+".to_string();
+        //let frontmatter = Frontmatter::new(frontmatter_string.as_str()).unwrap();
+        //println!("{}", frontmatter.serialise());
+        //println!("{}", api.frontmatter(&view.body).unwrap());
     });
 }
 
