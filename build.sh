@@ -74,7 +74,7 @@ compile_post() {
   mkdir -p "${BLOG_OUTPUT}"
   [ -e  "${TEMPLATES}/post.sh" ] || exit "$?"
   cargo run compile-markup "${1}" "${TEMPLATES}/post.sh" \
-    "blog/lang/file_stem.html" \
+    "blog/{lang}/{year}-{month}-{day}-{file_stem}.html" \
     --api-dir "${API}" \
     --cache-dir "${CACHE}" \
     --domain "${DOMAIN}" \

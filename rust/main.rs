@@ -49,6 +49,7 @@ macro_rules! match_subcommands {
     };
 }
 
+#[inline]
 fn parse_option(arg_iter: &mut env::Args, config: &mut Config, option: &str) -> Result<(), String> {
     match option {
         "v" | "verbose" => config.verbose = true,
@@ -58,11 +59,6 @@ fn parse_option(arg_iter: &mut env::Args, config: &mut Config, option: &str) -> 
         "domain" => config.domain = arg_iter.next(),
         "public-dir" => config.public_dir = arg_iter.next(),
         "templates-dir" => config.templates_dir = arg_iter.next(),
-        "a" | "arg" => {
-            if let Some(s) = arg_iter.next() {
-                config.arg = s;
-            }
-        }
         _ => {
             return Err(format!(
                 "'{}' is an invalid option\nTry `{} -h` for help",
@@ -137,9 +133,24 @@ fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
 
 }
 
+
+macro_rules! join {
+    ($($t:expr),*) => {
+        [$($t),*].join("").as_str()
+    };
+}
+
+// Lexically hide the owned value
+macro_rules! borrow {
+    (let $lhs:ident = $rhs:expr) => {
+        let $lhs = $rhs;
+        let $lhs = &$lhs;
+    };
+}
 //run: ../build.sh
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
     let (stem, ext) = split_name_extension(pathstr).or_die(1);
+    // @TODO: Macroify/const function this
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
@@ -158,11 +169,11 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
     let templates_dir = config.templates_dir.as_ref()
         .ok_or("--templates-dir is a required option")
         .or_die(1);
+
     check_is_dir_or_die(cache_dir.as_str(), "--cache-dir");
     check_is_file_or_die(api_dir.as_str());
 
     let api = FileApi::from_filename(pathstr, api_dir.as_str()).or_die(1);
-
 
     //let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
     //println!("{}", text);
@@ -176,33 +187,31 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
     };
     post.views.iter().for_each(|view| {
         println!("###### {} ######", view.lang.unwrap_or("All"));
-        //println!("{}", view.body.join(""));
         let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
-//        let frontmatter_string = r"hello: a
-//tags: a d b
-//"
-//        .to_string();
-        //println!("{}", frontmatter_string);
         let frontmatter = Frontmatter::new(frontmatter_string.as_str())
             .map_err(|err| err.with_filename(pathstr))
             .or_die(1);
-        let output_loc = path_format;
-        let tags_loc = path_format;
+        let lang = view.lang.unwrap_or("");
+        borrow!(let output_loc = frontmatter.format(path_format, stem, lang));
+        borrow!(let tags_loc = frontmatter.format(path_format, "tags", lang));
         command_run(
             Path::new(post_formatter),
             None,
             &[
                 frontmatter.serialise().as_str(),
-                ["domain:", domain].join("").as_str(),
-                ["local_toc_path:", cache_dir, "/toc/", stem, ".html"].join("").as_str(),
-                ["local_body_path:", cache_dir, "/body/", stem, ".html"].join("").as_str(),
-                ["local_templates_dir:", templates_dir].join("").as_str(),
-                ["local_output_path:", public_dir, "/", path_format].join("").as_str(),
-                ["relative_output_url:", output_loc].join("").as_str(),
-                ["relative_tags_url:", tags_loc].join("").as_str(),
-                ["lang_list:", post.lang_list.join(" ").as_str()].join("").as_str(),
+                join!("domain:", domain),
+                join!("local_toc_path:", cache_dir, "/toc/", output_loc),
+                join!("local_body_path:", cache_dir, "/body/", output_loc),
+                join!("local_templates_dir:", templates_dir),
+                join!("local_output_path:", public_dir, "/blog/", output_loc),
+                join!("relative_output_url:", output_loc),
+                join!("relative_tags_url:", tags_loc),
+                join!("lang_list:", post.lang_list.join(" ").as_str()),
             ]
         ).or_die(1);
+
+        //println!("{}", view.body.join(""));
+        //println!("{}", frontmatter_string);
         //println!("{}", frontmatter.serialise());
         //println!("{}", api.frontmatter(&view.body).unwrap());
     });

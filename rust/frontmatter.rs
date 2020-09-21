@@ -7,11 +7,11 @@ use std::borrow::Cow;
 
 #[derive(Debug)]
 pub enum Value<'a> {
-    //    Os(OsString),
     Utf8(&'a str),
     DateTime(DateTime<chrono::offset::FixedOffset>),
 }
 
+// @TODO unit test tags, date-created, date-updated always exist
 //#[test]
 //fn tags() {
 //
@@ -23,7 +23,7 @@ pub enum Value<'a> {
 const KEY_BLACKLIST: [&str; 5] = ["file_stem", "lang", "year", "month", "day"];
 type FrontmatterResult<'a> = Result<Frontmatter<'a>, String>;
 
-use crate::traits::VecExt;
+use crate::traits::{RangeExt, VecExt};
 
 // This is slightly wasteful with memory
 // 'ignore_list' is expected to be small
@@ -60,7 +60,7 @@ pub struct Frontmatter<'a> {
     tags: Vec<&'a str>,
 }
 
-//run: cargo run compile-markup ../config/published/blue.adoc ../.cache ../config/api
+//run: ../build.sh
 // @TODO: Maybe change use a proper JSON parser?
 impl<'a> Frontmatter<'a> {
     pub fn new(frontmatter: &'a str) -> Result<Self, ParseError> {
@@ -92,7 +92,7 @@ impl<'a> Frontmatter<'a> {
                 parse_tags_and_push(&mut tag_list, val_str, &[])
                     .map_err(|err| (i + 1, line, Cow::Owned(err)))?;
             } else if key == "date-created" || key == "date-updated" {
-                key_list.push(key);
+                key_list.push_and_check(key);
                 let date = DateTime::parse_from_rfc2822(val_str).map_err(|err| {
                     (
                         i + 1,
@@ -108,7 +108,7 @@ impl<'a> Frontmatter<'a> {
                 })?;
                 value_list.push_and_check(Value::DateTime(date));
             } else {
-                key_list.push(key);
+                key_list.push_and_check(key);
                 value_list.push_and_check(Value::Utf8(val_str));
             }
         }
@@ -127,67 +127,73 @@ impl<'a> Frontmatter<'a> {
         Some(&self.values[i])
     }
 
-    //pub fn format(
-    //    &self,
-    //    template: &str,
-    //    file_stem: &str,
-    //    lang: &str,
-    //) -> String {
-    //    let init = String::with_capacity(template.len() * 2);
-    //    // The split() we want is implemented on RangeI
-    //    RangeI::from(template)
-    //        .split_over(template, Self::find_markup)
-    //        .fold(init, |mut acc, (hay_range, markup_range)| {
-    //            let key = if markup_range.is_empty() {
-    //                // Not found
-    //                ""
-    //            } else {
-    //                // Remove the surround curly brackets
-    //                &template[markup_range.start + 1..=markup_range.end - 1]
-    //            };
+    #[inline]
+    fn pad_two<'b>(num: u32) -> Cow<'b, str> {
+        let mut padded = String::with_capacity('0'.len_utf8() * 2);
+        let tens =  num / 10;
+        let ones = num % 10;
+        padded.push(std::char::from_digit(tens, 10).unwrap());
+        padded.push(std::char::from_digit(ones, 10).unwrap());
+        Cow::Owned(padded)
+    }
 
-    //            let date_string; // So its borrow can live longer
+    pub fn format(
+        &self,
+        template: &str,
+        file_stem: &str,
+        lang: &str,
+    ) -> String {
+        let range = 0..template.len();
+        let count = range.split_over(template, Self::find_markup).count();
+        let mut output = Vec::with_capacity(count * 2);
+        range.split_over(template, Self::find_markup).for_each(|x| {
+            let text = x.0.of(template);
+            let key = x.1.of(template);
+            let key = if key.is_empty() {
+                key
+            } else { // remove the surrounding curly brackets
+                &key['{'.len_utf8()..key.len() - '}'.len_utf8()]
+            };
 
-    //            // VOLATILE: Sync with key_blacklist
-    //            let sub = if key == "year" || key == "month" || key == "day" {
-    //                date_string = match self.lookup("date-created") {
-    //                    // Should be been caught at frontmatter creation
-    //                    Some(FlexString::Utf8(_)) => unreachable!(),
-    //                    // TODO: do year, month, day
-    //                    Some(FlexString::DateTime(x)) => match key {
-    //                        "year" => x.year().to_string(),
-    //                        "month" => x.month().to_string(),
-    //                        "day" => x.day().to_string(),
-    //                        _ => "".to_string(),
-    //                    },
-    //                    None => "".to_string(),
-    //                };
-    //                &date_string
-    //            } else if key == "lang" {
-    //                lang
-    //            } else if key == "file_stem" {
-    //                file_stem
-    //            } else {
-    //                match self.lookup(key) {
-    //                    Some(FlexString::Utf8(x)) => x,
-    //                    Some(FlexString::DateTime(_)) => unreachable!(),
-    //                    None => "",
-    //                }
-    //            };
-
-    //            acc.reserve(hay_range.len() + sub.len());
-    //            acc.push_str(hay_range.of(template));
-    //            acc.push_str(sub);
-    //            acc
-    //        })
-    //}
+            // @TODO allow for date format
+            // VOLATILE: Sync with key_blacklist
+            let value = match key {
+                "year" | "month" | "day" => match self.lookup("date-created") {
+                    Some(Value::Utf8(_)) => unreachable!("Always stored as a date"),
+                    Some(Value::DateTime(x)) => match key {
+                        "year" => Cow::Owned(x.year().to_string()),
+                        "month" => Self::pad_two(x.month()),
+                        "day" => Self::pad_two(x.day()),
+                        _ => unreachable!(),
+                    },
+                    None => todo!("Will add defaults to be taken in from file"),
+                }
+                "lang" => Cow::Borrowed(lang),
+                "file_stem" => Cow::Borrowed(file_stem),
+                _ => {
+                    match self.lookup(key) {
+                        Some(Value::Utf8(x)) => Cow::Borrowed(*x),
+                        Some(Value::DateTime(_)) => todo!(),
+                        None => Cow::Borrowed(""),
+                    }
+                }
+            };
+            output.push_and_check(Cow::Borrowed(text));
+            output.push_and_check(value);
+        });
+        output.join("")
+    }
 
     // post, frontmatter, lang => filename (check all filepath limits?) => filepathk
-    pub fn find_markup(buffer: &str) -> Option<(usize, usize)> {
+    // @TODO for split_over()
+    //       change this back to Option<Range<usize>>
+    //       will be useful custom_error for more robustness
+    //       as we can terminate more eplicitly (maybe), also more idomatic
+    pub fn find_markup(buffer: &str) -> std::ops::Range<usize> {
         buffer.find('{').and_then(|i| {
             let rest = &buffer[i..buffer.len()];
-            Some((i, rest.find('}')? + i))
-        })
+            rest.find('}').map(|end| (i..i + end + '}'.len_utf8()))
+        }).unwrap_or(buffer.len()..buffer.len())
     }
 
     //Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
