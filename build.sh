@@ -45,20 +45,44 @@ NL='
 
 #run: time sh %
 main() {
-  wd="$( pwd; printf a )"; wd="${wd%${NL}a}"
-  CONFIG="${wd}/config"
-  SOURCE="${wd}/source"
-  PUBLIC="${wd}/public"
-  DOMAIN="${PUBLIC}"
+  wd="$( dirname "${0}"; printf a )"; wd="${wd%${NL}a}"
+  cd "${wd}" || exit "$?"
+  PROJECT_HOME="$( pwd; printf a )"; PROJECT_HOME="${PROJECT_HOME%${NL}a}"
+  CONFIG="config"
+  SOURCE="source"
+  PUBLIC="public"
+  CACHE=".cache"
+
+  API="${CONFIG}/api"
+  BLOG_OUTPUT="${PUBLIC}/blog"
+  DRAFTS="${CONFIG}/drafts"
+  PUBLISHED="${CONFIG}/published"
   TEMPLATES="${CONFIG}/website-templates"
 
-  clean
-  mkdir -p "${SOURCE}"
-  do_for_each_file_in 'source' 'source/' compile || exit "$?"
+  DOMAIN="${PROJECT_HOME}/${PUBLIC}"
+
+  #clean
+  #mkdir -p "${SOURCE}"
+  #do_for_each_file_in 'source' 'source/' compile || exit "$?"
+  compile_post "${PUBLISHED}/blue.adoc"
 }
 
 
 FILES_TO_PROCESS_LIMIT=10000
+
+compile_post() {
+  mkdir -p "${BLOG_OUTPUT}"
+  [ -e  "${TEMPLATES}/post.sh" ] || exit "$?"
+  cargo run compile-markup "${1}" "${TEMPLATES}/post.sh" \
+    "blog/lang/file_stem.html" \
+    --api-dir "${API}" \
+    --cache-dir "${CACHE}" \
+    --domain "${DOMAIN}" \
+    --public-dir "${BLOG_OUTPUT}" \
+    --templates-dir "${TEMPLATES}" \
+  # end
+
+}
 
 clean() {
   rm -rf "${PUBLIC}"

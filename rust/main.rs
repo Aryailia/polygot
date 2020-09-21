@@ -1,16 +1,22 @@
 #![allow(dead_code)]
 use chrono::offset::Local;
 use filetime::{set_file_mtime, FileTime};
-use std::{env, fs, io::ErrorKind, path::Path, process::exit, str::Chars};
+use std::{
+    env, fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    process::exit,
+    str::Chars,
+};
 
-mod fileapi;
-mod post;
 mod custom_errors;
-mod traits;
+mod fileapi;
 mod frontmatter;
-use fileapi::FileApi;
-use post::Post;
+mod post;
+mod traits;
+use fileapi::{FileApi, command_run};
 use frontmatter::Frontmatter;
+use post::Post;
 use traits::*;
 
 const NAME: &str = "blog";
@@ -43,8 +49,32 @@ macro_rules! match_subcommands {
     };
 }
 
+fn parse_option(arg_iter: &mut env::Args, config: &mut Config, option: &str) -> Result<(), String> {
+    match option {
+        "v" | "verbose" => config.verbose = true,
+        "h" | "help" => {}
+        "api-dir" => config.api_dir = arg_iter.next(),
+        "cache-dir" => config.cache_dir = arg_iter.next(),
+        "domain" => config.domain = arg_iter.next(),
+        "public-dir" => config.public_dir = arg_iter.next(),
+        "templates-dir" => config.templates_dir = arg_iter.next(),
+        "a" | "arg" => {
+            if let Some(s) = arg_iter.next() {
+                config.arg = s;
+            }
+        }
+        _ => {
+            return Err(format!(
+                "'{}' is an invalid option\nTry `{} -h` for help",
+                option, NAME,
+            ))
+        }
+    }
+    Ok(())
+}
+
 fn main() {
-    let (_config, args) = Config::parse_env().or_die(1);
+    let (config, args) = Config::parse_env().or_die(1);
 
     // run: cargo run compare-last-updated a b
     // run: cargo run sync-last-updated-of-first-to b a
@@ -66,27 +96,11 @@ fn main() {
 
         4, "compile-markup" => {
             let source = args.get(1).unwrap();
-            let cache_dir = args.get(2).unwrap();
-            let api_dir = args.get(3).unwrap();
+            let post_formatter = args.get(2).unwrap();
+            let path_formatter = args.get(3).unwrap();
+            check_is_file_or_die(post_formatter.as_str());
 
-            let file = fs::read_to_string(source)
-                .map_err(|err| format!("{:?} {}", source, err))
-                .or_die(1);
-            if !Path::new(cache_dir).is_dir() {
-                Path::new(cache_dir).metadata()
-                    .map_err(|err| format!("'{}' {}", cache_dir, err))
-                    .or_die(1);
-            }
-            if !Path::new(api_dir).is_file() {
-                Path::new(api_dir).metadata()
-                    .map_err(|err| format!("'{}' {}", api_dir, err))
-                    .or_die(1);
-            }
-
-            let api = FileApi::from_filename(source.as_str(), api_dir.as_str())
-                .or_die(1);
-            let _stem = Path::new(source).file_stem();
-            compile_post(file, &api, source.as_str());
+            compile_post(&config, &source, &post_formatter, &path_formatter);
         }
 
         1, "test" => {
@@ -96,33 +110,134 @@ fn main() {
     });
 }
 
-//run: cargo run compile-markup ../config/published/blue.adoc ../.cache ../config/api
-fn compile_post(text: String, api: &FileApi, filename: &str) {
+//#[test]
+//fn asdf() {
+//    StringPath::new(&[".cache/toc/file.adoc"]);
+//}
+
+// @TODO use error in post.rs
+// @TODO: use this in fileapi.rs
+fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
+    let path = Path::new(pathstr);
+    let stem_os = path.file_stem().ok_or_else(|| {
+        format!("The post path {:?} does not is not a path to a file", pathstr)
+    })?;
+    let ext_os = path.extension().ok_or_else(|| {
+        format!("The post {:?} does not have a file extension", pathstr)
+    })?;
+
+    let file_stem = stem_os.to_str().ok_or_else(|| {
+        format!("The stem {:?} in {:?} has invalid UTF8", stem_os, pathstr)
+    })?;
+    let extension = ext_os.to_str().ok_or_else(|| {
+        format!("The extension {:?} in {:?} has invalid UTF8", ext_os, pathstr)
+    })?;
+    //(file_stem, extension)
+    Ok((file_stem, extension))
+
+}
+
+//run: ../build.sh
+fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
+    let (stem, ext) = split_name_extension(pathstr).or_die(1);
+    let text = fs::read_to_string(pathstr)
+        .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
+        .or_die(1);
+    let api_dir = config.api_dir.as_ref()
+        .ok_or("--api-dir is a required option")
+        .or_die(1);
+    let cache_dir = config.cache_dir.as_ref()
+        .ok_or("--cache-dir is a required option")
+        .or_die(1);
+    let domain = config.domain.as_ref()
+        .ok_or("--domain is a required option")
+        .or_die(1);
+    let public_dir = config.public_dir.as_ref()
+        .ok_or("--public_dir is a required option")
+        .or_die(1);
+    let templates_dir = config.templates_dir.as_ref()
+        .ok_or("--templates-dir is a required option")
+        .or_die(1);
+    check_is_dir_or_die(cache_dir.as_str(), "--cache-dir");
+    check_is_file_or_die(api_dir.as_str());
+
+    let api = FileApi::from_filename(pathstr, api_dir.as_str()).or_die(1);
+
+
     //let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
     //println!("{}", text);
     //println!("########\n# Done #\n########\n");
     let post = match Post::new(text.as_str(), &api) {
         Ok(x) => x,
         Err(err) => {
-            eprintln!("{}{}", filename, err);
+            eprintln!("{}{}", pathstr, err);
             exit(1);
         }
     };
     post.views.iter().for_each(|view| {
         println!("###### {} ######", view.lang.unwrap_or("All"));
         //println!("{}", view.body.join(""));
-        //let frontmatter_string = api.frontmatter(&view.body).or_die(1);
-        let frontmatter_string = r"hello: a
-tags: a d b
-".to_string();
+        let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
+//        let frontmatter_string = r"hello: a
+//tags: a d b
+//"
+//        .to_string();
         //println!("{}", frontmatter_string);
-        let frontmatter = Frontmatter::new(frontmatter_string.as_str()).unwrap();
-        println!("{}", frontmatter.serialise());
+        let frontmatter = Frontmatter::new(frontmatter_string.as_str())
+            .map_err(|err| err.with_filename(pathstr))
+            .or_die(1);
+        let output_loc = path_format;
+        let tags_loc = path_format;
+        command_run(
+            Path::new(post_formatter),
+            None,
+            &[
+                frontmatter.serialise().as_str(),
+                ["domain:", domain].join("").as_str(),
+                ["local_toc_path:", cache_dir, "/toc/", stem, ".html"].join("").as_str(),
+                ["local_body_path:", cache_dir, "/body/", stem, ".html"].join("").as_str(),
+                ["local_templates_dir:", templates_dir].join("").as_str(),
+                ["local_output_path:", public_dir, "/", path_format].join("").as_str(),
+                ["relative_output_url:", output_loc].join("").as_str(),
+                ["relative_tags_url:", tags_loc].join("").as_str(),
+                ["lang_list:", post.lang_list.join(" ").as_str()].join("").as_str(),
+            ]
+        ).or_die(1);
+        //println!("{}", frontmatter.serialise());
         //println!("{}", api.frontmatter(&view.body).unwrap());
     });
 }
 
-fn sync_last_updated(first: &String, date_source: &String) -> ! {
+fn stringpath_join(paths: &[&str]) -> String {
+    paths.iter().for_each(|part| {
+        debug_assert!(!part.contains("/"));
+    });
+    paths.join("")
+}
+
+fn check_is_file_or_die(pathstr: &str) {
+    if !Path::new(pathstr).is_file() {
+        Path::new(pathstr).metadata()
+            .map_err(|err| format!("'{:?}' is not a valid file. {}", pathstr, err))
+            .or_die(1);
+    }
+}
+
+fn check_is_dir_or_die(pathstr: &str, error_msg: &str) {
+    if !Path::new(pathstr).is_dir() {
+        Path::new(pathstr)
+            .metadata()
+            .map_err(|err| {
+                format!(
+                    "`{} {:?}` is not a valid directory. {}",
+                    error_msg, pathstr, err
+                )
+            })
+            .or_die(1);
+    }
+}
+
+fn sync_last_updated(first: &str, date_source: &str) -> ! {
     Path::new(date_source)
         .metadata()
         .map(|metadata| FileTime::from_last_modification_time(&metadata))
@@ -158,6 +273,12 @@ struct Config {
     arg: String,
     stdin: bool,
     verbose: bool,
+
+    api_dir: Option<String>,
+    cache_dir: Option<String>,
+    domain: Option<String>, // public dir as a URL
+    public_dir: Option<String>, // public dir as a path
+    templates_dir: Option<String>,
 }
 impl Config {
     fn parse_env() -> Result<(Self, Vec<String>), String> {
@@ -166,6 +287,11 @@ impl Config {
             // Defaults
             arg: String::new(),
             stdin: false,
+            api_dir: None,
+            cache_dir: None,
+            domain: None,
+            public_dir: None,
+            templates_dir: None,
             verbose: false,
         };
         let mut literal = false;
@@ -180,21 +306,7 @@ impl Config {
                 config.stdin = true;
             } else {
                 for option in parse_option_str(arg.as_str()) {
-                    match option {
-                        "v" | "verbose" => config.verbose = true,
-                        "h" | "help" => {}
-                        "a" | "arg" => {
-                            if let Some(s) = arg_iter.next() {
-                                config.arg = s;
-                            }
-                        }
-                        _ => {
-                            return Err(format!(
-                                "'{}' is an invalid option\nTry `{} -h` for help",
-                                option, NAME,
-                            ))
-                        }
-                    }
+                    parse_option(&mut arg_iter, &mut config, option)?;
                 }
             }
         }
@@ -217,7 +329,6 @@ fn parse_option_str(option_str: &str) -> OptionsSplit {
     debug_assert!(option_str.starts_with('-'));
     debug_assert_ne!(option_str, "-");
     debug_assert_ne!(option_str, "--");
-    println!("{:?}", option_str);
     iter.next();
 
     OptionsSplit {
