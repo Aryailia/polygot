@@ -1,20 +1,14 @@
 #![allow(dead_code)]
 use chrono::offset::Local;
 use filetime::{set_file_mtime, FileTime};
-use std::{
-    env, fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    process::exit,
-    str::Chars,
-};
+use std::{env, fs, io::ErrorKind, path::Path, process::exit, str::Chars};
 
 mod custom_errors;
 mod fileapi;
 mod frontmatter;
 mod post;
 mod traits;
-use fileapi::{FileApi, command_run};
+use fileapi::{command_run, FileApi};
 use frontmatter::Frontmatter;
 use post::Post;
 use traits::*;
@@ -49,24 +43,85 @@ macro_rules! match_subcommands {
     };
 }
 
-#[inline]
-fn parse_option(arg_iter: &mut env::Args, config: &mut Config, option: &str) -> Result<(), String> {
-    match option {
-        "v" | "verbose" => config.verbose = true,
-        "h" | "help" => {}
-        "api-dir" => config.api_dir = arg_iter.next(),
-        "cache-dir" => config.cache_dir = arg_iter.next(),
-        "domain" => config.domain = arg_iter.next(),
-        "public-dir" => config.public_dir = arg_iter.next(),
-        "templates-dir" => config.templates_dir = arg_iter.next(),
-        _ => {
-            return Err(format!(
-                "'{}' is an invalid option\nTry `{} -h` for help",
-                option, NAME,
-            ))
+macro_rules! define_config {
+    (
+        @optional {
+            $($o_short:literal $o_long:literal
+               $o_id:ident: $o_type:ty = $o_default:expr => $($to_set:expr)?,)*
         }
+        @to_be_required {
+            $($r_short:literal $r_long:literal $r_id:ident,)*
+        }
+    ) => {
+        //#[derive(Debug)]
+        struct Config {
+            $($o_id: $o_type,)*
+            $($r_id: Option<String>,)*
+        }
+        impl Config {
+            fn new() -> Self {
+                Self {
+                    $($o_id: $o_default,)*
+                    $($r_id: None,)*
+                }
+            }
+        }
+
+        #[inline]
+        fn parse_option(arg_iter: &mut env::Args, config: &mut Config, option: &str) -> Result<(), String> {
+            match option {
+                "h" | "help" => {}
+                $($o_short | $o_long => config.$o_id = $o_default,)*
+                $($r_short | $r_long => config.$r_id = arg_iter.next(),)*
+                _ => {
+                    return Err(format!(
+                        "'{}' is an invalid option\nTry `{} -h` for help",
+                        option, NAME,
+                    ))
+                }
+            }
+            Ok(())
+        }
+
+        // Put in a struct so that we can keep the variable names
+        // the same between 'parse_option' and use in 'compile_post'
+        // Naming chosen for the sentence: 'Require::options_from(config)'
+        struct Require<'a> {
+            $($r_id: &'a str,)*
+        }
+        impl<'a> Require<'a> {
+            fn options_from(config: &'a Config) -> Self {
+                Self {
+                    $($r_id: config.$r_id.as_ref()
+                        .ok_or("--api-dir is a required option")
+                        .or_die(1)
+                        .as_str(),
+                    )*
+                }
+            }
+        }
+
+    };
+
+}
+
+/******************************************************************************
+ * Main entry
+ ******************************************************************************/
+define_config! {
+    @optional {
+        // "help" is special cased (see macro definition)
+        // short long ident: type = default => value after option specified
+        "v" "verbose" verbose: bool = false => true, // true if -v is specified
     }
-    Ok(())
+    @to_be_required {
+        "a" "api-dir" api_dir,
+        // @VOLATILE sync this with 'compile_post'
+        "c" "cache-dir" cache_dir,
+        "d" "domain" domain,               // public dir as a URL
+        "p" "public-dir" public_dir,       // public dir as a path
+        "t" "templates-dir" templates_dir,
+    }
 }
 
 fn main() {
@@ -116,23 +171,27 @@ fn main() {
 fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
     let path = Path::new(pathstr);
     let stem_os = path.file_stem().ok_or_else(|| {
-        format!("The post path {:?} does not is not a path to a file", pathstr)
+        format!(
+            "The post path {:?} does not is not a path to a file",
+            pathstr
+        )
     })?;
-    let ext_os = path.extension().ok_or_else(|| {
-        format!("The post {:?} does not have a file extension", pathstr)
-    })?;
+    let ext_os = path
+        .extension()
+        .ok_or_else(|| format!("The post {:?} does not have a file extension", pathstr))?;
 
-    let file_stem = stem_os.to_str().ok_or_else(|| {
-        format!("The stem {:?} in {:?} has invalid UTF8", stem_os, pathstr)
-    })?;
+    let file_stem = stem_os
+        .to_str()
+        .ok_or_else(|| format!("The stem {:?} in {:?} has invalid UTF8", stem_os, pathstr))?;
     let extension = ext_os.to_str().ok_or_else(|| {
-        format!("The extension {:?} in {:?} has invalid UTF8", ext_os, pathstr)
+        format!(
+            "The extension {:?} in {:?} has invalid UTF8",
+            ext_os, pathstr
+        )
     })?;
     //(file_stem, extension)
     Ok((file_stem, extension))
-
 }
-
 
 macro_rules! join {
     ($($t:expr),*) => {
@@ -150,30 +209,15 @@ macro_rules! borrow {
 //run: ../build.sh
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
     let (stem, ext) = split_name_extension(pathstr).or_die(1);
-    // @TODO: Macroify/const function this
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
-    let api_dir = config.api_dir.as_ref()
-        .ok_or("--api-dir is a required option")
-        .or_die(1);
-    let cache_dir = config.cache_dir.as_ref()
-        .ok_or("--cache-dir is a required option")
-        .or_die(1);
-    let domain = config.domain.as_ref()
-        .ok_or("--domain is a required option")
-        .or_die(1);
-    let public_dir = config.public_dir.as_ref()
-        .ok_or("--public_dir is a required option")
-        .or_die(1);
-    let templates_dir = config.templates_dir.as_ref()
-        .ok_or("--templates-dir is a required option")
-        .or_die(1);
+    let x = Require::options_from(config);
+    // @VOLATILE sync with 'define_config'
+    check_is_dir_or_die(x.cache_dir, "--cache-dir");
+    check_is_file_or_die(x.api_dir);
 
-    check_is_dir_or_die(cache_dir.as_str(), "--cache-dir");
-    check_is_file_or_die(api_dir.as_str());
-
-    let api = FileApi::from_filename(pathstr, api_dir.as_str()).or_die(1);
+    let api = FileApi::from_filename(x.api_dir, ext).or_die(1);
 
     //let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
     //println!("{}", text);
@@ -199,16 +243,17 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
             None,
             &[
                 frontmatter.serialise().as_str(),
-                join!("domain:", domain),
-                join!("local_toc_path:", cache_dir, "/toc/", output_loc),
-                join!("local_body_path:", cache_dir, "/body/", output_loc),
-                join!("local_templates_dir:", templates_dir),
-                join!("local_output_path:", public_dir, "/blog/", output_loc),
+                join!("domain:", x.domain),
+                join!("local_toc_path:", x.cache_dir, "/toc/", output_loc),
+                join!("local_body_path:", x.cache_dir, "/body/", output_loc),
+                join!("local_templates_dir:", x.templates_dir),
+                join!("local_output_path:", x.public_dir, "/blog/", output_loc),
                 join!("relative_output_url:", output_loc),
                 join!("relative_tags_url:", tags_loc),
                 join!("lang_list:", post.lang_list.join(" ").as_str()),
-            ]
-        ).or_die(1);
+            ],
+        )
+        .or_die(1);
 
         //println!("{}", view.body.join(""));
         //println!("{}", frontmatter_string);
@@ -226,7 +271,8 @@ fn stringpath_join(paths: &[&str]) -> String {
 
 fn check_is_file_or_die(pathstr: &str) {
     if !Path::new(pathstr).is_file() {
-        Path::new(pathstr).metadata()
+        Path::new(pathstr)
+            .metadata()
             .map_err(|err| format!("'{:?}' is not a valid file. {}", pathstr, err))
             .or_die(1);
     }
@@ -276,34 +322,16 @@ fn compare_mtimes(source: &str, target: &str) -> bool {
     source_date < target_date
 }
 
-// Although I could use clap.rs, I want to keep this lean
-#[derive(Debug)]
-struct Config {
-    arg: String,
-    stdin: bool,
-    verbose: bool,
 
-    api_dir: Option<String>,
-    cache_dir: Option<String>,
-    domain: Option<String>, // public dir as a URL
-    public_dir: Option<String>, // public dir as a path
-    templates_dir: Option<String>,
-}
+// Although I could use clap.rs, I want to keep this lean
+// Also implementing manually as a learning experience
 impl Config {
     fn parse_env() -> Result<(Self, Vec<String>), String> {
         let mut output = Vec::with_capacity(env::args().count());
-        let mut config = Self {
-            // Defaults
-            arg: String::new(),
-            stdin: false,
-            api_dir: None,
-            cache_dir: None,
-            domain: None,
-            public_dir: None,
-            templates_dir: None,
-            verbose: false,
-        };
+        let mut config = Config::new();
         let mut literal = false;
+        //let mut stdin = false;
+
         let mut arg_iter = env::args();
         arg_iter.next(); // skip the 0th parameter (path to program running)
         while let Some(arg) = arg_iter.next() {
@@ -311,8 +339,8 @@ impl Config {
                 output.push_and_check(arg);
             } else if arg.as_str() == "--" {
                 literal = true;
-            } else if arg.as_str() == "-" {
-                config.stdin = true;
+            //} else if arg.as_str() == "-" {
+            //    stdin = true;
             } else {
                 for option in parse_option_str(arg.as_str()) {
                     parse_option(&mut arg_iter, &mut config, option)?;

@@ -6,28 +6,16 @@ pub struct FileApi(PathBuf);
 
 type Output = Result<String, String>;
 impl FileApi {
-    pub fn from_filename(filename: &str, directory: &str) -> Result<Self, String> {
-        filename
-            .rfind('.')
-            .and_then(|index| {
-                if filename.rfind('.').unwrap_or(0) >= index || index == 0 {
-                    Some(&filename[index + '.'.len_utf8()..])
-                } else {
-                    None
-                }
-            })
-            .ok_or(format!("{:?} has no file extension", filename))
-            .and_then(|extension| {
-                let command = Path::new(directory).join(Path::new(extension));
-                if command.is_file() {
-                    Ok(Self(command))
-                } else {
-                    Err(format!(
-                        "API handler for {:?} files not found in {:?}",
-                        extension, directory
-                    ))
-                }
-            })
+    pub fn from_filename(api_dir: &str, extension: &str) -> Result<Self, String> {
+        let command = Path::new(api_dir).join(Path::new(extension));
+        if command.is_file() {
+            Ok(Self(command))
+        } else {
+            Err(format!(
+                "API handler for {:?} files not found in {:?}",
+                extension, api_dir
+            ))
+        }
     }
 
     // These three lines are the what each file extension API must implement
