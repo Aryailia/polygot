@@ -36,7 +36,7 @@ pub struct ParseError<'a> {
 }
 
 impl<'a> ParseError<'a> {
-    fn with_filename<'b>(self, filename: &'b str) -> FullParseError<'a, 'b> {
+    pub fn with_filename<'b>(self, filename: &'b str) -> FullParseError<'a, 'b> {
         FullParseError {
             filename,
             error: self,

@@ -90,7 +90,7 @@ impl RangeExt for RStr {
             buffer: &original[self.start..self.end],
             delimit_by: |substr| {
                 let len = substr.len();
-                substr.find("\n").map(|i| i + 1..i + 1).unwrap_or(len..len)
+                substr.find('\n').map(|i| i + 1..i + 1).unwrap_or(len..len)
             },
             index: self.start,
         }
