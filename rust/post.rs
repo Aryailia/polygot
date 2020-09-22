@@ -1,14 +1,17 @@
 use crate::custom_errors::ParseError;
+use crate::helpers::parse_tags_and_push;
 use crate::traits::{BoolExt, RStr, RangeExt, VecExt};
 use std::borrow::Cow;
 use std::mem::replace;
 
-type WipPart<'a> = (Option<Vec<&'a str>>, RStr);
 const API_SET_LANGUAGE: &str = "api_set_lang:";
 const ALL_LANG: Option<&str> = None;
+const ALL_LANG_REPR: [&str; 2] = ["*", "ALL"]; // case-sensitive
 
+// Originally, I wanted 'Post' to own the post and hand out views as borrows
 // https://cfsamson.github.io/books-futures-explained/4_pin.html
 // I cannot figure self-referntial structs in a nice way
+// (Ouborous crate seems to be the newest thing)
 #[derive(Debug)]
 pub struct Post<'a> {
     original: &'a str,
@@ -46,13 +49,13 @@ impl<'a> Post<'a> {
             if let Some(lang_str) = find_config_key_end(line, comment_marker) {
                 // e.g. 'api_set_lang: en ALL jp' -> 'en all jp'
                 // May be both all and list languages
-                let (has_all_tag, langs_given) =
-                    analyse_langs(lang_str).map_err(|err| (row, line, Cow::Owned(err)))?;
-                unique_append(&mut unique_langs, &langs_given);
+                let has_all_tag = line.split_whitespace().any(|t| ALL_LANG_REPR.contains(&t));
+                let langs = parse_tags_and_push(&mut unique_langs, lang_str, &ALL_LANG_REPR, false)
+                    .map_err(|err| (row, line, Cow::Owned(err)))?;
 
-                let languages = (!has_all_tag && !langs_given.is_empty()).to_some(langs_given);
+                let langs = (!has_all_tag && !langs.is_empty()).to_some(langs);
                 parts.push_and_check((
-                    replace(&mut toadd_lang, languages),
+                    replace(&mut toadd_lang, langs),
                     replace(&mut toadd_rstr, range.end..range.end),
                 ));
             } else {
@@ -102,7 +105,7 @@ impl<'a> Post<'a> {
 /******************************************************************************
  * Post helper functions
  ******************************************************************************/
-fn pick_lang(entry: &WipPart, pick: &str) -> Option<RStr> {
+fn pick_lang(entry: &(Option<Vec<&str>>, RStr), pick: &str) -> Option<RStr> {
     let (maybe_all_langs, range) = entry;
     if let Some(lang_list) = maybe_all_langs {
         if lang_list.iter().all(|lang| *lang != pick) {
@@ -117,30 +120,6 @@ fn is_all_lang(tag: &str) -> bool {
 }
 
 #[inline]
-fn analyse_langs(lang_line: &str) -> Result<(bool, Vec<&str>), String> {
-    let has_all = lang_line.split_whitespace().any(is_all_lang);
-    let mut langs = Vec::with_capacity(lang_line.split_whitespace().count());
-    for l in lang_line.split_whitespace().filter(|l| !is_all_lang(l)) {
-        langs.push_and_check(l);
-        if l.contains(&['/', '\\'][..]) {
-            return Err(format!("{:?} is an invalid tag.", l));
-        }
-    }
-
-    Ok((has_all, langs))
-}
-
-#[inline]
-fn unique_append<'a>(unique: &mut Vec<&'a str>, to_add: &[&'a str]) {
-    let always_add = unique.is_empty();
-    for lang in to_add {
-        if always_add || unique.iter().all(|l| l != lang) {
-            unique.push_and_check(lang);
-        }
-    }
-}
-
-#[inline]
 fn find_config_key_end<'a>(line: &'a str, comment_marker: &str) -> Option<&'a str> {
     let trimmed = line.trim_start();
     if trimmed.starts_with(comment_marker) {
@@ -150,22 +129,4 @@ fn find_config_key_end<'a>(line: &'a str, comment_marker: &str) -> Option<&'a st
         }
     }
     None
-}
-
-trait SubstrToRange {
-    fn range_within(&self, container: &str) -> RStr;
-}
-
-impl SubstrToRange for str {
-    fn range_within(&self, container: &str) -> RStr {
-        let start = self.as_ptr() as usize - container.as_ptr() as usize;
-        start..start + self.len()
-    }
-}
-
-#[test]
-fn range_within() {
-    let a = "     asdf\nsheep ";
-    let r = a.trim().range_within(a);
-    assert_eq!(&a[r], "asdf\nsheep");
 }

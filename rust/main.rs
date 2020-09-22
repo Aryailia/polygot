@@ -4,6 +4,7 @@ use filetime::{set_file_mtime, FileTime};
 use std::{env, fs, io::ErrorKind, path::Path, process::exit, str::Chars};
 
 mod custom_errors;
+mod helpers;
 mod fileapi;
 mod frontmatter;
 mod post;

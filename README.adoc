@@ -2,30 +2,34 @@
 
 == Description
 
-A static site generator built with POSIX shell for ease of customisability. Supports Markdown and Asciidoctor out of the box, other formats are easily extensible.
+A static site generator built with POSIX shell (it can run with 'dash') for ease of customisability. Supports Markdown (@TODO) and Asciidoctor out of the box, other formats are easily extensible.
+
+You can compile markdown with Raph Levien's 'link:https://github.com/raphlinus/pulldown-cmark[pulldown-cmark]' (written in Rust! Also https://commonmark.org/[CommonMark] is pretty cool! A better flavour of Markdown)
+or John MacFarlane's 'link:https://pandoc.org/[pandoc]' (https://github.com/jgm/pandoc[github repo]).
 
 == Design Goals
 
 === Reader-facing
 * Static site generation
 * Tags
-* Automatic RSS/Atom feed generation from blog posts
+* Automatic RSS/Atom feed generation from blog posts (@TODO)
 * Table of contents in sidebar
-* All major features supported without JavaScript
+* All features supported without JavaScript (except scrollspy, @TODO)
 
 === Writer-facing
 
-* Able to use any markup format you wish (md, adoc, org, etc.). Supporting a file format requires implementing a simple api in link:config/api[]
+* Able to use any markup format you wish (md, adoc, org, etc.). Supporting a file format requires implementing a simple API in link:config/api[]
 
+* Use shellscript as a templating markup language
 * Specify by output file locations via frontmatter, e.g. "\{year}/\{month}\{day}/\{filename}"
 * Write multilingual posts with languages side by side in the source files for easy comparison.
-* Support for shared navbar and footer etc. See usage of link:config/combine.sh[] in link:build.sh[]
+* Support for shared navigation bar and footer etc. See usage of link:config/combine.sh[] in link:build.sh[] and 
 * Builds sass/lass out of the box. Compilation is quite easy to customise (edit link:build.sh[])
 
 == Why not just use a Makefile
 
 Two of the subcommands of the rust portion of the code are dedicated to comparing and setting the 'last updated' metadata of files.{wj}footnote:[This could have also been implemented with `touch -m` which is POSIX, but some platforms do not come with touch out of the box.]{wj}footnote:["link:https://pubs.opengroup.org/onlinepubs/9699919799/idx/utilities.html[POSIX.1-2017: Utilities]". IEEE and The Open Group. 2017. Last Accessed: 2020-09-18.]
-This and the entirety of link:build.sh[build.sh] duplicate Makefile functionality.{wj}footnote:["link:https://stackoverflow.com/questions/1789705/[How does make know which files to update]" Stack Exchange, Inc. Last Accessed: 2020-09-18.]
+This and the entirety of link:build.sh[] duplicate Makefile functionality.{wj}footnote:["link:https://stackoverflow.com/questions/1789705/[How does make know which files to update]" Stack Exchange, Inc. Last Accessed: 2020-09-18.]
 I do this because:
 
 * The original design of using primarily POSIX is to make this easily customisable and portable.
@@ -35,6 +39,58 @@ As this is a CLI tool, there is no need to learn any other language to customise
 * Ideally we be writing build scripts in real programming languages (not even POSIX shell), not adding needless complication with more syntax to learn. Again, one less language to learn.
 
 * I may be wrong, but there is no way to really recursively traverse a directory tree and compile all the files in said tree.
+
+* Shellscript serves as a reasonable templating language. More reason to stay with shellscript as the only cognitive burden
+
+
+== Customisation
+
+Although this static site generator is tailored for customisation via shellscript, you can.
+
+To support a file extension, it needs to implement three subcommands,
+see link:rust/fileapi.rs[] for where it is implemented
+or see link:config/api[] for examples.
+
+=== Writing blog source files
+In posts, to associate a section to a language, you must have
+`api_set_lang`{wj}footnote:[`api_set_lang` is defined in link:rust/post.rs[]]
+in a comment.{wj}footnote:[Comments are provided by the relevant user-defined file-extension api as found in link:config/api[]]
+e.g. in Asciidoctor (comments are `//`):
+```
+Defaults to an ALL view.
+So this shows up in 'en', 'jp', and 'zh'
+
+//api_set_lang: en jp
+This only shows up in 'en' and 'jp'
+
+// api_set_lang: ALL zh
+This will be in all views. ('en', 'jp', 'zh')
+```
+
+There are two special languages: `*` and `ALL`, both set the following to text to be included in every valid language view of the post.
+Tags are whitespace delimited.
+There are a couple of characters blacklisted. See `TAG_BLACKLIST` in link:rust/helpers.rs[]
+
+=== Frontmatter
+Frontmatter is expected to be extracted via the user-defined file extension api
+Frontmatter is expected to be of the format `{key}:{value}`.
+A newline is the row delimiter (can have blank lines).
+
+e.g. This a sample output of `adoc frontmatter`
+```
+title:        My First Blog Post
+author:       John Doe
+date-created: Tue, 22 Sep 2020 23:59:22 +0800
+date-updated: Tue, 22 Sep 2020 23:59:22 +0800
+tags:         travelling news work
+```
+The tags specified here are used to tag.
+They obey the same rules as language tags in the above section.
+**Note:** Values are trimmed (leading and trailing whitespace are removed).
+
+=== Output location
+
+TODO: write this
 
 == Similar static-site blog generators
 

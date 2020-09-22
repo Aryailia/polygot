@@ -2,6 +2,8 @@
 // 'tags' has a special format
 // NOTE: 'filename', 'lang' are reserved
 use crate::custom_errors::ParseError;
+use crate::traits::{RangeExt, VecExt};
+use crate::helpers::parse_tags_and_push;
 use chrono::{Utc, DateTime, Datelike};
 use std::borrow::Cow;
 
@@ -21,37 +23,8 @@ pub enum Value<'a> {
 //    println!("hello");
 //}
 
+// @TODO change year month day to date format
 const KEY_BLACKLIST: [&str; 5] = ["file_stem", "lang", "year", "month", "day"];
-type FrontmatterResult<'a> = Result<Frontmatter<'a>, String>;
-
-use crate::traits::{RangeExt, VecExt};
-
-// This is slightly wasteful with memory
-// 'ignore_list' is expected to be small
-// returns the problematic tag
-fn parse_tags_and_push<'a>(
-    list: &mut Vec<&'a str>,
-    line: &'a str,
-    ignore_list: &[&str],
-) -> Result<(), String> {
-    list.reserve(line.split_whitespace().count());
-    for tag in line.split_whitespace().filter(|t| !ignore_list.contains(t)) {
-        if list.contains(&tag) {
-            return Err(format!(
-                "{:?} was already defined. Cannot have duplicates",
-                tag
-            ));
-
-        // '/' and '\\' interfere with pathnames
-        // ',' interfers with csv for tags cache
-        } else if tag.contains(&['/', '\\', ','][..]) {
-            return Err(format!("{:?} is an invalid tag.", tag));
-        } else {
-            list.push_and_check(tag);
-        }
-    }
-    Ok(())
-}
 
 #[derive(Debug)]
 pub struct Frontmatter<'a> {
@@ -91,7 +64,7 @@ impl<'a> Frontmatter<'a> {
                     "was already defined. Cannot have duplicates.",
                 )?;
             } else if key == "tags" {
-                parse_tags_and_push(&mut tag_list, val_str, &[])
+                parse_tags_and_push(&mut tag_list, val_str, &[], true)
                     .map_err(|err| (i + 1, line, Cow::Owned(err)))?;
             } else if key == "date-created" || key == "date-updated" {
                 key_list.push_and_check(key);
@@ -353,25 +326,6 @@ fn error_invalid<'a>(
 //    //error.push_str(&format!("Must adhere to /{}/", valid_tag.as_str()));
 //    Err(error)
 //}
-
-fn cannot_parse_date_tag<'a>(
-    key: &'a str,
-    val: &'a str,
-    parse_err: String,
-) -> FrontmatterResult<'a> {
-    Err(format!(
-        r"If the file path template requires {{day}}, {{month}}, or {{year}}.
-
-Key:   {}
-Value: {}
-
-The value must conform to RFC 2822 dates (internet format).
-
-Err: {}
-",
-        key, val, parse_err
-    ))
-}
 
 // run: cargo test frontmatter::frontmatter_test -- --nocapture
 //#[cfg(test)]
