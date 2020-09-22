@@ -1,1 +1,6 @@
 /target
+
+/config/drafts
+/config/published
+/.cache
+/public

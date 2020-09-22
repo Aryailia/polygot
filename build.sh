@@ -78,7 +78,7 @@ compile_post() {
     --api-dir "${API}" \
     --cache-dir "${CACHE}" \
     --domain "${DOMAIN}" \
-    --public-dir "${BLOG_OUTPUT}" \
+    --public-dir "${PUBLIC}" \
     --templates-dir "${TEMPLATES}" \
   # end
 

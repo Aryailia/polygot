@@ -193,20 +193,28 @@ fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
     Ok((file_stem, extension))
 }
 
-macro_rules! join {
-    ($($t:expr),*) => {
-        [$($t),*].join("").as_str()
+//run: ../build.sh
+// When merged, this will perserve joining space
+fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a str) {
+    let len = space_delimited_str.len();
+    let skip_len = to_skip.len();
+    let before_skip = space_delimited_str.find(to_skip).unwrap_or(0);
+    let left_close = if len > skip_len && (before_skip + skip_len) == len {
+        before_skip - ' '.len_utf8()
+    } else {
+        before_skip
     };
+    let right_start = if skip_len > 0 && before_skip + skip_len != len {
+        before_skip + skip_len + ' '.len_utf8()
+    } else {
+        before_skip + skip_len
+    };
+    let left = &space_delimited_str[0..left_close];
+    let right = &space_delimited_str[right_start..];
+    (left, right)
 }
 
-// Lexically hide the owned value
-macro_rules! borrow {
-    (let $lhs:ident = $rhs:expr) => {
-        let $lhs = $rhs;
-        let $lhs = &$lhs;
-    };
-}
-//run: ../build.sh
+
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
     let (stem, ext) = split_name_extension(pathstr).or_die(1);
     let text = fs::read_to_string(pathstr)
@@ -229,37 +237,129 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
             exit(1);
         }
     };
-    post.views.iter().for_each(|view| {
-        println!("###### {} ######", view.lang.unwrap_or("All"));
-        let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
-        let frontmatter = Frontmatter::new(frontmatter_string.as_str())
+
+    let len = post.views.len();
+    let mut frontmatter_string_list = Vec::with_capacity(len);
+    frontmatter_string_list.extend(post.views.iter().map(|view| {
+        api.frontmatter(view.body.as_slice()).or_die(1)
+    }));
+    let mut output_locs = Vec::with_capacity(len);
+    output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
+        let frontmatter_str = frontmatter_string_list[i].as_str();
+        let frontmatter = Frontmatter::new(frontmatter_str)
             .map_err(|err| err.with_filename(pathstr))
             .or_die(1);
         let lang = view.lang.unwrap_or("");
-        borrow!(let output_loc = frontmatter.format(path_format, stem, lang));
-        borrow!(let tags_loc = frontmatter.format(path_format, "tags", lang));
-        command_run(
-            Path::new(post_formatter),
-            None,
-            &[
-                frontmatter.serialise().as_str(),
-                join!("domain:", x.domain),
-                join!("local_toc_path:", x.cache_dir, "/toc/", output_loc),
-                join!("local_body_path:", x.cache_dir, "/body/", output_loc),
-                join!("local_templates_dir:", x.templates_dir),
-                join!("local_output_path:", x.public_dir, "/blog/", output_loc),
-                join!("relative_output_url:", output_loc),
-                join!("relative_tags_url:", tags_loc),
-                join!("lang_list:", post.lang_list.join(" ").as_str()),
-            ],
-        )
-        .or_die(1);
+        let output_loc = frontmatter.format(path_format, stem, lang);
+        let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
+
+        (frontmatter, lang, output_loc, link)
+    }));
+
+    let lang_list = post.lang_list.join(" ");
+    let wrapped_views = post.views.iter().enumerate().map(|(i, view)| {
+        let lang = output_locs[i].1;
+        ExtraData {
+            body: view.body.as_slice(),
+            lang,
+            other_langs: exclude(lang_list.as_str(), lang),
+            toc_loc: [x.cache_dir, "/toc/", lang, "/", stem, ".html"].join(""),
+            doc_loc: [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join(""),
+            output_loc: output_locs[i].2.as_str(),
+            frontmatter: &output_locs[i].0,
+        }
+    });
+
+    wrapped_views.for_each(|data| {
+        //println!("###### {:?} ######", data.lang);
+
+        // Compile step (makes table of contents and document itself)
+        if false {
+            let toc_loc = data.toc_loc.as_str();
+            let doc_loc = data.doc_loc.as_str();
+            make_parent(toc_loc).or_die(1);
+            make_parent(doc_loc).or_die(1);
+            api.compile(data.body, toc_loc, doc_loc);
+        }
+
+        // Linker step (put the ToC, doc, and disparate parts together)
+        let target = [x.public_dir, "/", data.output_loc].join("");
+        if false {
+            make_parent(target.as_str()).or_die(1);
+        }
+        let linker_stdout = link_post(
+            post_formatter,
+            path_format,
+            &x,
+            target.as_str(),
+            &output_locs,
+            &data
+        );
+        eprintln!("{}", linker_stdout);
 
         //println!("{}", view.body.join(""));
         //println!("{}", frontmatter_string);
         //println!("{}", frontmatter.serialise());
         //println!("{}", api.frontmatter(&view.body).unwrap());
     });
+}
+
+fn make_parent(location: &str) -> Result<(), String> {
+    if let Some(parent) = Path::new(location).parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!("Cannot create directory {:?}. {}", parent.display(), err)
+        })?;
+    }
+    Ok(())
+}
+
+// Just to make passing arguments easier
+struct ExtraData<'a> {
+    body: &'a [&'a str],
+    lang: &'a str,
+    other_langs: (&'a str, &'a str),
+    toc_loc: String,
+    doc_loc: String,
+    output_loc: &'a str,
+    frontmatter: &'a Frontmatter<'a>,
+}
+
+#[inline]
+// Returns the output of the command (probably just ignore this)
+fn link_post(
+    post_formatter: &str,
+    path_format: &str,
+    x: &Require,
+    local_output_loc: &str,
+    output_loc_list: &[(Frontmatter, &str, String, String)],
+    data: &ExtraData,
+) -> String {
+    let frontmatter = &data.frontmatter;
+    let relative_output_loc = data.output_loc;
+    let tags_loc = frontmatter.format(path_format, "tags", data.lang);
+    let source_keyvals = frontmatter.serialise();
+
+    let base = [
+        ["domain:", x.domain].join(""),
+        ["local_toc_path:", data.toc_loc.as_str()].join(""),
+        ["local_doc_path:", data.doc_loc.as_str()].join(""),
+        ["local_templates_dir:", x.templates_dir].join(""),
+        ["local_output_path:", local_output_loc].join(""),
+        ["relative_output_url:", relative_output_loc].join(""),
+        ["relative_tags_url:", tags_loc.as_str()].join(""),
+        ["other_view_langs:", data.other_langs.0, data.other_langs.1].join(""),
+    ];
+    // = base + output_loc_list + 1 - 1 (+ 1 frontmatter, - 1 self link)
+    let capacity = base.len() + output_loc_list.len();
+    let mut api_keyvals = Vec::with_capacity(capacity);
+    api_keyvals.push_and_check(source_keyvals.as_str());
+    api_keyvals.extend(base.iter().map(|s| s.as_str()));
+    api_keyvals.extend(output_loc_list.iter()
+        .filter(|(_, l, _, _)| *l != data.lang)
+        .map(|(_, _, _, other_view_link)| other_view_link.as_str())
+    );
+    debug_assert_eq!(capacity, api_keyvals.len());
+    command_run(Path::new(post_formatter), None, &api_keyvals).or_die(1)
 }
 
 fn stringpath_join(paths: &[&str]) -> String {
@@ -390,5 +490,27 @@ impl<'a> Iterator for OptionsSplit<'a> {
             OptionsSplitState::LongDone => None,
             OptionsSplitState::Short => Some(&rest[0..ch.len_utf8()]),
         }
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::exclude;
+    fn merge(tuple: (&str, &str)) -> String {
+        let mut merged = String::with_capacity(tuple.0.len() + tuple.1.len());
+        merged.push_str(tuple.0);
+        merged.push_str(tuple.1);
+        merged
+    }
+    #[test]
+    fn exclude_test() {
+        assert_eq!(merge(exclude("en", "")), "en");
+        assert_eq!(merge(exclude("en", "en")), "");
+        assert_eq!(merge(exclude("en jp", "")), "en jp");
+        assert_eq!(merge(exclude("en jp", "en")), "jp");
+        assert_eq!(merge(exclude("en jp", "jp")), "en");
+        assert_eq!(merge(exclude("en jp zh", "en")), "jp zh");
+        assert_eq!(merge(exclude("en jp zh", "jp")), "en zh");
+        assert_eq!(merge(exclude("en jp zh", "zh")), "en jp");
     }
 }

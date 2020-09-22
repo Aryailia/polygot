@@ -39,14 +39,14 @@ set -- \
   "local_make_dir:config/make" \
   "local_templates_dir:config/templates" \
   "local_toc_path:.blog/toc/zh/chinese_tones.html" \
-  "local_body_path:.blog/body/zh/chinese_tones.html" \
+  "local_doc_path:.blog/doc/zh/chinese_tones.html" \
   "local_output_path:public/blog/zh/chinese_tones.html" \
   "relative_output_url:blog/zh/chinese_tones.html" \
   "relative_tags_url:blog/zh/tags.html" \
-  "lang_list:en jp stuff" \
-  "relative_lang_en:blog/en/chinese_tones.html" \
-  "relative_lang_jp:blog/jp/chinese_tones.html" \
-  "relative_lang_stuff:blog/stuff/chinese_tones.html" \
+  "other_view_langs:en jp stuff" \
+  "relative_en_view:blog/en/chinese_tones.html" \
+  "relative_jp_view:blog/jp/chinese_tones.html" \
+  "relative_stuff_view:blog/stuff/chinese_tones.html" \
 # end
 else
   post_hash_table="${1}"
@@ -65,16 +65,16 @@ NEWLINE='
              domain="$( api_lookuP "domain" "$@" )" || exit 1
 local_templates_dir="$( api_lookuP "local_templates_dir" "$@" )" || exit 1
      local_toc_path="$( api_lookuP "local_toc_path" "$@" )" || exit 1
-    local_body_path="$( api_lookuP "local_body_path" "$@" )" || exit 1
+     local_doc_path="$( api_lookuP "local_doc_path" "$@" )" || exit 1
   local_output_path="$( api_lookuP "local_output_path" "$@" )" || exit 1
 relative_output_url="$( api_lookuP "relative_output_url" "$@" )" || exit 1
   relative_tags_url="$( api_lookuP "relative_tags_url" "$@" )" || exit 1
-          lang_list="$( api_lookuP "lang_list" "$@" )" || exit 1
+   other_view_langs="$( api_lookuP "other_view_langs" "$@" )" || exit 1
 
 # @VOLATILE: sync with left aside on changes
 # Validate existance
 for lang in ${lang}; do
-  api_lookuP "relative_lang_${lang}" "$@"
+  api_lookuP "relative_${lang}_view" "$@"
 done >/dev/null
 
       author="$( post_lookuP "author" )" || exit 1
@@ -83,7 +83,7 @@ date_updated="$( post_lookuP "date-updated" )" || exit 1
         tags="$( post_lookuP "tags" )" || exit 1
        title="$( post_lookuP "title" )" || exit 1
 
-<<EOF cat - #>"${local_output_path}"
+<<EOF cat - >"${local_output_path}"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -117,10 +117,10 @@ $( spaces="    "
     <div>
       <b>Other Languages:</b>
 $( spaces="      "
-  for lang in ${lang_list}; do
+  for lang in ${other_view_langs}; do
     printf '%s<div class="languagetag"><a href="%s">%s</a></div>\n' \
       "${spaces}" \
-      "${domain}/$( api_lookuP "relative_lang_${lang}" "$@" )" \
+      "${domain}/$( api_lookuP "relative_${lang}_view" "$@" )" \
       "${lang}" \
     # end
   done
@@ -144,7 +144,7 @@ $( cat "${local_toc_path}" )
   <main>
     <h1>${title}</h1>
     <div>Last Updated: ${date_updated}</div>
-$( cat "${local_body_path}" )
+$( cat "${local_doc_path}" )
   </main>
   <footer>
     sitemap
