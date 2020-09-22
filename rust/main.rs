@@ -85,12 +85,12 @@ macro_rules! define_config {
 
         // Put in a struct so that we can keep the variable names
         // the same between 'parse_option' and use in 'compile_post'
-        // Naming chosen for the sentence: 'Require::options_from(config)'
-        struct Require<'a> {
+        // Naming chosen for the sentence: 'RequireConfigs::unwrap(config)'
+        struct RequiredConfigs<'a> {
             $($r_id: &'a str,)*
         }
-        impl<'a> Require<'a> {
-            fn options_from(config: &'a Config) -> Self {
+        impl<'a> RequiredConfigs<'a> {
+            fn unwrap(config: &'a Config) -> Self {
                 Self {
                     $($r_id: config.$r_id.as_ref()
                         .ok_or("--api-dir is a required option")
@@ -102,7 +102,6 @@ macro_rules! define_config {
         }
 
     };
-
 }
 
 /******************************************************************************
@@ -161,13 +160,6 @@ fn main() {
     });
 }
 
-//#[test]
-//fn asdf() {
-//    StringPath::new(&[".cache/toc/file.adoc"]);
-//}
-
-// @TODO use error in post.rs
-// @TODO: use this in fileapi.rs
 fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
     let path = Path::new(pathstr);
     let stem_os = path.file_stem().ok_or_else(|| {
@@ -214,39 +206,38 @@ fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a 
     (left, right)
 }
 
-
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
     let (stem, ext) = split_name_extension(pathstr).or_die(1);
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
-    let x = Require::options_from(config);
+    let x = RequiredConfigs::unwrap(config);
     // @VOLATILE sync with 'define_config'
     check_is_dir_or_die(x.cache_dir, "--cache-dir");
     check_is_file_or_die(x.api_dir);
 
     let api = FileApi::from_filename(x.api_dir, ext).or_die(1);
+    let comment_marker = api.comment().or_die(1);
 
-    //let asdf = "// api_set_lang: yo/ \nasdf\nasdf\n// api_set_lang:try *\nyo";
-    //println!("{}", text);
-    //println!("########\n# Done #\n########\n");
-    let post = match Post::new(text.as_str(), &api) {
-        Ok(x) => x,
-        Err(err) => {
-            eprintln!("{}{}", pathstr, err);
-            exit(1);
-        }
-    };
+    let post = Post::new(text.as_str(), comment_marker.as_str())
+        .map_err(|err| err.with_filename(pathstr))
+        .or_die(1);
 
     let len = post.views.len();
     let mut frontmatter_string_list = Vec::with_capacity(len);
-    frontmatter_string_list.extend(post.views.iter().map(|view| {
-        api.frontmatter(view.body.as_slice()).or_die(1)
-    }));
+    frontmatter_string_list.extend(
+        post.views
+            .iter()
+            .map(|view| api.frontmatter(view.body.as_slice()).or_die(1)),
+    );
     let mut output_locs = Vec::with_capacity(len);
     output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
         let frontmatter_str = frontmatter_string_list[i].as_str();
         let frontmatter = Frontmatter::new(frontmatter_str)
+            // @TODO frontmatter string instead for context since
+            //       frontmatter is extracted.
+            //       Or perhaps make frontmatter scripts retain newlines
+            //       so that this works properly?
             .map_err(|err| err.with_filename(pathstr))
             .or_die(1);
         let lang = view.lang.unwrap_or("");
@@ -257,9 +248,10 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
     }));
 
     let lang_list = post.lang_list.join(" ");
-    let wrapped_views = post.views.iter().enumerate().map(|(i, view)| {
+    post.views.iter().enumerate().for_each(|(i, view)| {
+        //println!("###### {:?} ######", data.lang);
         let lang = output_locs[i].1;
-        ExtraData {
+        let data = ExtraData {
             body: view.body.as_slice(),
             lang,
             other_langs: exclude(lang_list.as_str(), lang),
@@ -267,11 +259,7 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
             doc_loc: [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join(""),
             output_loc: output_locs[i].2.as_str(),
             frontmatter: &output_locs[i].0,
-        }
-    });
-
-    wrapped_views.for_each(|data| {
-        //println!("###### {:?} ######", data.lang);
+        };
 
         // Compile step (makes table of contents and document itself)
         if false {
@@ -279,7 +267,7 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
             let doc_loc = data.doc_loc.as_str();
             make_parent(toc_loc).or_die(1);
             make_parent(doc_loc).or_die(1);
-            api.compile(data.body, toc_loc, doc_loc);
+            api.compile(data.body, toc_loc, doc_loc).or_die(1);
         }
 
         // Linker step (put the ToC, doc, and disparate parts together)
@@ -293,7 +281,7 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
             &x,
             target.as_str(),
             &output_locs,
-            &data
+            &data,
         );
         eprintln!("{}", linker_stdout);
 
@@ -306,9 +294,8 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
 
 fn make_parent(location: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(location).parent() {
-        fs::create_dir_all(parent).map_err(|err| {
-            format!("Cannot create directory {:?}. {}", parent.display(), err)
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Cannot create directory {:?}. {}", parent.display(), err))?;
     }
     Ok(())
 }
@@ -329,7 +316,7 @@ struct ExtraData<'a> {
 fn link_post(
     post_formatter: &str,
     path_format: &str,
-    x: &Require,
+    x: &RequiredConfigs,
     local_output_loc: &str,
     output_loc_list: &[(Frontmatter, &str, String, String)],
     data: &ExtraData,
@@ -354,19 +341,14 @@ fn link_post(
     let mut api_keyvals = Vec::with_capacity(capacity);
     api_keyvals.push_and_check(source_keyvals.as_str());
     api_keyvals.extend(base.iter().map(|s| s.as_str()));
-    api_keyvals.extend(output_loc_list.iter()
-        .filter(|(_, l, _, _)| *l != data.lang)
-        .map(|(_, _, _, other_view_link)| other_view_link.as_str())
+    api_keyvals.extend(
+        output_loc_list
+            .iter()
+            .filter(|(_, l, _, _)| *l != data.lang)
+            .map(|(_, _, _, other_view_link)| other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
     command_run(Path::new(post_formatter), None, &api_keyvals).or_die(1)
-}
-
-fn stringpath_join(paths: &[&str]) -> String {
-    paths.iter().for_each(|part| {
-        debug_assert!(!part.contains("/"));
-    });
-    paths.join("")
 }
 
 fn check_is_file_or_die(pathstr: &str) {
@@ -421,7 +403,6 @@ fn compare_mtimes(source: &str, target: &str) -> bool {
 
     source_date < target_date
 }
-
 
 // Although I could use clap.rs, I want to keep this lean
 // Also implementing manually as a learning experience

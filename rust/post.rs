@@ -1,6 +1,6 @@
-use crate::fileapi::FileApi;
-//use crate::traits::ResultExt;
-use crate::traits::{BoolExt, RangeExt, VecExt, RStr};
+use crate::custom_errors::ParseError;
+use crate::traits::{BoolExt, RStr, RangeExt, VecExt};
+use std::borrow::Cow;
 use std::mem::replace;
 
 type WipPart<'a> = (Option<Vec<&'a str>>, RStr);
@@ -23,9 +23,7 @@ pub struct PostView<'a> {
 }
 
 impl<'a> Post<'a> {
-    pub fn new(text: &'a str, api: &FileApi) -> Result<Self, String> {
-        let marker = api.comment()?;
-        let marker = marker.as_str();
+    pub fn new(text: &'a str, comment_marker: &str) -> Result<Self, ParseError<'a>> {
         // 'lang_max_count' will count all duplicates (which is the common case)
         // e.g. api_set_lang: en jp
         //      api_set_lang: ALL
@@ -35,7 +33,7 @@ impl<'a> Post<'a> {
         let (section_count, lang_max_count) = text
             .lines()
             // TODO: rename find_config_key_end
-            .filter_map(|line| find_config_key_end(line, marker))
+            .filter_map(|line| find_config_key_end(line, comment_marker))
             .map(|body| body.split_whitespace().count())
             .fold((1, 0), |(count, sum), to_add| (count + 1, sum + to_add));
 
@@ -45,11 +43,11 @@ impl<'a> Post<'a> {
         let mut toadd_rstr = 0..0;
         for (row, (range, _)) in (0..text.len()).split(text).enumerate() {
             let line = range.of(text);
-            if let Some(lang_str) = find_config_key_end(line, marker) {
+            if let Some(lang_str) = find_config_key_end(line, comment_marker) {
                 // e.g. 'api_set_lang: en ALL jp' -> 'en all jp'
                 // May be both all and list languages
-                let (has_all_tag, langs_given) = analyse_langs(lang_str)
-                    .map_err(|err| format!("{}\n  |\n  | {}  |\n= error: {}", row, line, err))?;
+                let (has_all_tag, langs_given) =
+                    analyse_langs(lang_str).map_err(|err| (row, line, Cow::Owned(err)))?;
                 unique_append(&mut unique_langs, &langs_given);
 
                 let languages = (!has_all_tag && !langs_given.is_empty()).to_some(langs_given);

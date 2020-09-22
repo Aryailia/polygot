@@ -18,7 +18,7 @@ fn error_writer_allocations() {
     assert!(!err.to_string().is_empty());
     let err: ParseError = (10, "The caturday\n", Cow::from("the mat")).into();
     assert!(!err.to_string().is_empty());
-    assert!(!err.with_filename("fat.adoc").is_empty());
+    assert!(!err.with_filename("fat.adoc").to_string().is_empty());
 }
 
 //#[derive(Debug)]
