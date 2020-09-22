@@ -2,13 +2,14 @@
 // 'tags' has a special format
 // NOTE: 'filename', 'lang' are reserved
 use crate::custom_errors::ParseError;
-use chrono::{offset::Utc, DateTime, Datelike};
+use chrono::{Utc, DateTime, Datelike};
 use std::borrow::Cow;
 
 #[derive(Debug)]
 pub enum Value<'a> {
     Utf8(&'a str),
-    DateTime(DateTime<chrono::offset::FixedOffset>),
+    //DateTime(DateTime<chrono::offset::FixedOffset>),
+    DateTime(DateTime<Utc>),
 }
 
 // @TODO unit test tags, date-created, date-updated always exist
@@ -63,8 +64,9 @@ pub struct Frontmatter<'a> {
 //run: ../build.sh
 // @TODO: Maybe change use a proper JSON parser?
 impl<'a> Frontmatter<'a> {
-    pub fn new(frontmatter: &'a str) -> Result<Self, ParseError> {
-        let keyval_count = validate_and_count(frontmatter)?;
+    pub fn new(frontmatter: &'a str, created: DateTime<Utc>, modified: DateTime<Utc>) -> Result<Self, ParseError> {
+        // + 2 for guarenteed 'date-created' and 'date-updated'
+        let keyval_count = validate_and_count(frontmatter)? + 2;
         let mut key_list = Vec::with_capacity(keyval_count);
         let mut value_list = Vec::with_capacity(keyval_count);
         let mut tag_list = Vec::new();
@@ -106,13 +108,21 @@ impl<'a> Frontmatter<'a> {
                         ),
                     )
                 })?;
-                value_list.push_and_check(Value::DateTime(date));
+                value_list.push_and_check(Value::DateTime(date.with_timezone(&Utc)));
             } else {
                 key_list.push_and_check(key);
                 value_list.push_and_check(Value::Utf8(val_str));
             }
         }
-
+        // Default have 'date-modified' and 'date-updated'
+        if !key_list.contains(&"date-created") {
+            key_list.push_and_check("date-created");
+            value_list.push_and_check(Value::DateTime(created));
+        }
+        if !key_list.contains(&"date-updated") {
+            key_list.push_and_check("date-updated");
+            value_list.push_and_check(Value::DateTime(modified));
+        }
         debug_assert_eq!(key_list.len(), value_list.len());
         Ok(Self {
             keys: key_list,

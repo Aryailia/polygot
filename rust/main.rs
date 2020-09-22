@@ -100,7 +100,6 @@ macro_rules! define_config {
                 }
             }
         }
-
     };
 }
 
@@ -160,7 +159,30 @@ fn main() {
     });
 }
 
-fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
+use chrono::{Utc, TimeZone, DateTime};
+use std::io;
+use std::time::SystemTime;
+fn to_datetime(time_result: io::Result<SystemTime>, msg: String) -> Result<DateTime<Utc>, String> {
+    let system_time = time_result.map_err(|err| format!("{} is not supported on this filesystem. {}", msg, err))?;
+    let time = system_time.duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|err| format!("{} is before UNIX epoch. {}", msg, err))?;
+    let secs = time.as_secs() / 1_000_000_000;
+    let nano = time.as_nanos() % 1_000_000_000;
+    if secs > i64::MAX as u64 {
+        return Err(format!("{} is too big and is not supported by the 'chrono' crate", msg));
+    }
+    //println!("s {:?}", Utc.timestamp(time.as_secs(), 0));
+    //println!("ns{:?}", Utc.timestamp(time.as_secs(), time.as_nanos()));
+
+    Ok(Utc.timestamp(secs as i64, nano as u32))
+}
+
+// @TODO implement warning system (not just fatal errors) for custom_errors.rs?
+//fn issue_warning() {
+//    eprintln!()
+//}
+
+fn analyse_path(pathstr: &str) -> Result<(&str, &str, DateTime<Utc>, DateTime<Utc>), String> {
     let path = Path::new(pathstr);
     let stem_os = path.file_stem().ok_or_else(|| {
         format!(
@@ -181,12 +203,35 @@ fn split_name_extension(pathstr: &str) -> Result<(&str, &str), String> {
             ext_os, pathstr
         )
     })?;
-    //(file_stem, extension)
-    Ok((file_stem, extension))
+
+    let metadata = path
+        .metadata()
+        .map_err(|err| format!("Cannot read metadata of {:?}. {}", pathstr, err))?;
+    let modified = to_datetime(metadata.modified(),
+        format!("The file created date of {:?}", pathstr))?;
+    let created = to_datetime(metadata.created(),
+        format!("The file last modified date metadata of {:?}", pathstr))?;
+
+    Ok((file_stem, extension, created, modified))
 }
 
 //run: ../build.sh
-// When merged, this will perserve joining space
+
+#[test]
+fn compile_test() {
+    let post = Post::new("hello", "//").or_die(1);
+    let view = post.views.first().unwrap();
+    let api = FileApi::from_filename("config/api/", "adoc").or_die(1);
+    let frontmatter_string = api.frontmatter(view.body.as_slice()).unwrap();
+    let frontmatter = Frontmatter::new(frontmatter_string.as_str(), Utc::now(),Utc::now()).or_die(1);
+    assert!(frontmatter.lookup("date-created").is_some());
+    assert!(frontmatter.lookup("date-updated").is_some());
+}
+
+
+
+// Check tests for use case
+// Remove an entry of a `vec.join(" ")` preserving the correct space delimiters
 fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a str) {
     let len = space_delimited_str.len();
     let skip_len = to_skip.len();
@@ -207,7 +252,7 @@ fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a 
 }
 
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
-    let (stem, ext) = split_name_extension(pathstr).or_die(1);
+    let (stem, ext, created, modified) = analyse_path(pathstr).or_die(1);
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
@@ -233,7 +278,7 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
     let mut output_locs = Vec::with_capacity(len);
     output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
         let frontmatter_str = frontmatter_string_list[i].as_str();
-        let frontmatter = Frontmatter::new(frontmatter_str)
+        let frontmatter = Frontmatter::new(frontmatter_str, created, modified)
             // @TODO frontmatter string instead for context since
             //       frontmatter is extracted.
             //       Or perhaps make frontmatter scripts retain newlines
@@ -247,6 +292,8 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
         (frontmatter, lang, output_loc, link)
     }));
 
+    //let
+    //let modified =
     let lang_list = post.lang_list.join(" ");
     post.views.iter().enumerate().for_each(|(i, view)| {
         //println!("###### {:?} ######", data.lang);
