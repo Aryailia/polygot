@@ -111,13 +111,14 @@ define_config! {
         // "help" is special cased (see macro definition)
         // short long ident: type = default => value after option specified
         "v" "verbose" verbose: bool = false => true, // true if -v is specified
+        "f" "force"   force:  bool = false => true,
     }
     @to_be_required {
         "a" "api-dir" api_dir,
         // @VOLATILE sync this with 'compile_post'
-        "c" "cache-dir" cache_dir,
-        "d" "domain" domain,               // public dir as a URL
-        "p" "public-dir" public_dir,       // public dir as a path
+        "c" "cache-dir"     cache_dir,
+        "d" "domain"        domain,        // public dir as a URL
+        "p" "public-dir"    public_dir,    // public dir as a path
         "t" "templates-dir" templates_dir,
     }
 }
@@ -129,7 +130,7 @@ fn main() {
     // run: cargo run sync-last-updated-of-first-to b a
 
     match_subcommands!(args {
-        1, "date-rfc2822" => {
+        1, "now-rfc2822" => {
             println!("{}", Local::now().to_rfc2822());
         }
         3, "compare-last-updated" => {
@@ -253,6 +254,9 @@ fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a 
 
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
     let (stem, ext, created, modified) = analyse_path(pathstr).or_die(1);
+    if !config.force {
+    }
+
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
@@ -269,66 +273,70 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
         .or_die(1);
 
     let len = post.views.len();
-    let mut frontmatter_string_list = Vec::with_capacity(len);
-    frontmatter_string_list.extend(
-        post.views
-            .iter()
-            .map(|view| api.frontmatter(view.body.as_slice()).or_die(1)),
-    );
+    let mut lang_toc_doc = Vec::with_capacity(len);
+    lang_toc_doc.extend(post.views.iter().map(|view| {
+        let lang = view.lang.unwrap_or("");
+        (
+            lang,
+            [x.cache_dir, "/toc/", lang, "/", stem, ".html"].join(""),
+            [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join(""),
+        )
+    }));
+    // Compile step (makes table of contents and document itself)
+    post.views.iter().enumerate().for_each(|(i, view)| {
+        let (_, toc_loc, doc_loc) = &lang_toc_doc[i];
+        if false {
+            make_parent(toc_loc).or_die(1);
+            make_parent(doc_loc).or_die(1);
+            api.compile(view.body.as_slice(), toc_loc, doc_loc).or_die(1);
+        }
+    });
+
+    // Pre-generate the metadata for the linker
+    // In particular, 'link' for all views is used by every other view
+    let lang_list = post.lang_list.join(" ");
+    let mut link_list = Vec::with_capacity(len);
     let mut output_locs = Vec::with_capacity(len);
     output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
-        let frontmatter_str = frontmatter_string_list[i].as_str();
-        let frontmatter = Frontmatter::new(frontmatter_str, created, modified)
+        let source = api.frontmatter(view.body.as_slice()).or_die(1);
+        let frontmatter = Frontmatter::new(source.as_str(), created, modified)
             // @TODO frontmatter string instead for context since
             //       frontmatter is extracted.
             //       Or perhaps make frontmatter scripts retain newlines
             //       so that this works properly?
             .map_err(|err| err.with_filename(pathstr))
             .or_die(1);
-        let lang = view.lang.unwrap_or("");
+        let lang = lang_toc_doc[i].0;
         let output_loc = frontmatter.format(path_format, stem, lang);
+        let serialised = frontmatter.serialise();
+        let tags_loc = frontmatter.format(path_format, "tags", lang);
         let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
 
-        (frontmatter, lang, output_loc, link)
-    }));
-
-    //let
-    //let modified =
-    let lang_list = post.lang_list.join(" ");
-    post.views.iter().enumerate().for_each(|(i, view)| {
-        //println!("###### {:?} ######", data.lang);
-        let lang = output_locs[i].1;
-        let data = ExtraData {
-            body: view.body.as_slice(),
+        link_list.push((lang, link));
+        ExtraData {
             lang,
             other_langs: exclude(lang_list.as_str(), lang),
-            toc_loc: [x.cache_dir, "/toc/", lang, "/", stem, ".html"].join(""),
-            doc_loc: [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join(""),
-            output_loc: output_locs[i].2.as_str(),
-            frontmatter: &output_locs[i].0,
-        };
-
-        // Compile step (makes table of contents and document itself)
-        if false {
-            let toc_loc = data.toc_loc.as_str();
-            let doc_loc = data.doc_loc.as_str();
-            make_parent(toc_loc).or_die(1);
-            make_parent(doc_loc).or_die(1);
-            api.compile(data.body, toc_loc, doc_loc).or_die(1);
+            toc_loc: lang_toc_doc[i].1.as_str(),
+            doc_loc: lang_toc_doc[i].2.as_str(),
+            output_loc,
+            tags_loc,
+            frontmatter_serialised: serialised,
         }
+    }));
 
-        // Linker step (put the ToC, doc, and disparate parts together)
-        let target = [x.public_dir, "/", data.output_loc].join("");
+    // Linker step (put the ToC, doc, and disparate parts together)
+    output_locs.iter().for_each(|data| {
+        println!("###### {:?} ######", data.lang);
+        let target = [x.public_dir, "/", data.output_loc.as_str()].join("");
         if false {
             make_parent(target.as_str()).or_die(1);
         }
         let linker_stdout = link_post(
             post_formatter,
-            path_format,
             &x,
             target.as_str(),
-            &output_locs,
-            &data,
+            &link_list,
+            data,
         );
         eprintln!("{}", linker_stdout);
 
@@ -349,50 +357,46 @@ fn make_parent(location: &str) -> Result<(), String> {
 
 // Just to make passing arguments easier
 struct ExtraData<'a> {
-    body: &'a [&'a str],
     lang: &'a str,
     other_langs: (&'a str, &'a str),
-    toc_loc: String,
-    doc_loc: String,
-    output_loc: &'a str,
-    frontmatter: &'a Frontmatter<'a>,
+    toc_loc: &'a str,
+    doc_loc: &'a str,
+    output_loc: String,
+    tags_loc: String,
+    frontmatter_serialised: String,
 }
 
 #[inline]
 // Returns the output of the command (probably just ignore this)
 fn link_post(
     post_formatter: &str,
-    path_format: &str,
     x: &RequiredConfigs,
     local_output_loc: &str,
-    output_loc_list: &[(Frontmatter, &str, String, String)],
+    link_list: &[(&str, String)],
     data: &ExtraData,
 ) -> String {
-    let frontmatter = &data.frontmatter;
-    let relative_output_loc = data.output_loc;
-    let tags_loc = frontmatter.format(path_format, "tags", data.lang);
-    let source_keyvals = frontmatter.serialise();
+    let relative_output_loc = data.output_loc.as_str();
 
     let base = [
         ["domain:", x.domain].join(""),
-        ["local_toc_path:", data.toc_loc.as_str()].join(""),
-        ["local_doc_path:", data.doc_loc.as_str()].join(""),
+        ["local_toc_path:", data.toc_loc].join(""),
+        ["local_doc_path:", data.doc_loc].join(""),
         ["local_templates_dir:", x.templates_dir].join(""),
         ["local_output_path:", local_output_loc].join(""),
         ["relative_output_url:", relative_output_loc].join(""),
-        ["relative_tags_url:", tags_loc.as_str()].join(""),
+        ["relative_tags_url:", data.tags_loc.as_str()].join(""),
         ["other_view_langs:", data.other_langs.0, data.other_langs.1].join(""),
     ];
-    // = base + output_loc_list + 1 - 1 (+ 1 frontmatter, - 1 self link)
-    let capacity = base.len() + output_loc_list.len();
+    // = base + link_list + 1 - 1 (+ 1 frontmatter, - 1 self link)
+    let capacity = base.len() + link_list.len();
     let mut api_keyvals = Vec::with_capacity(capacity);
-    api_keyvals.push_and_check(source_keyvals.as_str());
+    api_keyvals.push_and_check(data.frontmatter_serialised.as_str());
     api_keyvals.extend(base.iter().map(|s| s.as_str()));
     api_keyvals.extend(
-        output_loc_list
+        link_list
             .iter()
-            .filter(|(_, l, _, _)| *l != data.lang)
-            .map(|(_, _, _, other_view_link)| other_view_link.as_str()),
+            .filter(|(l, _)| *l != data.lang)
+            .map(|(_, other_view_link)| other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
     command_run(Path::new(post_formatter), None, &api_keyvals).or_die(1)
