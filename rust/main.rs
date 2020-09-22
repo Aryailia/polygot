@@ -254,9 +254,6 @@ fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a 
 
 fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
     let (stem, ext, created, modified) = analyse_path(pathstr).or_die(1);
-    if !config.force {
-    }
-
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
@@ -276,16 +273,26 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
     let mut lang_toc_doc = Vec::with_capacity(len);
     lang_toc_doc.extend(post.views.iter().map(|view| {
         let lang = view.lang.unwrap_or("");
-        (
-            lang,
-            [x.cache_dir, "/toc/", lang, "/", stem, ".html"].join(""),
-            [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join(""),
-        )
+        let toc_loc = [x.cache_dir, "/toc/", lang, "/", stem, ".html"].join("");
+        let doc_loc = [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join("");
+
+        // Always recompile/etc if --force
+
+        let out_of_date = config.force || analyse_path(toc_loc.as_str())
+            .and_then(|t| analyse_path(doc_loc.as_str()).map(|d| (t.3, d.3)))
+            .map(|(toc_modified, doc_modified)| {
+                //println!("=== {:?} ===", toc_loc);
+                //println!("{:?} {:?} {:?}", modified, toc_modified, doc_modified);
+                //println!("{} {}", modified > toc_modified, modified > doc_modified);
+                modified > toc_modified || modified > doc_modified
+            }).unwrap_or(true); // compile if they do not read file/etc.
+        (out_of_date, lang, toc_loc, doc_loc)
     }));
     // Compile step (makes table of contents and document itself)
     post.views.iter().enumerate().for_each(|(i, view)| {
-        let (_, toc_loc, doc_loc) = &lang_toc_doc[i];
-        if false {
+        let (out_of_date, _, toc_loc, doc_loc) = &lang_toc_doc[i];
+        if *out_of_date {
+            eprintln!("compiling {:?} and {:?}", toc_loc, doc_loc);
             make_parent(toc_loc).or_die(1);
             make_parent(doc_loc).or_die(1);
             api.compile(view.body.as_slice(), toc_loc, doc_loc).or_die(1);
@@ -306,18 +313,18 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
             //       so that this works properly?
             .map_err(|err| err.with_filename(pathstr))
             .or_die(1);
-        let lang = lang_toc_doc[i].0;
+        let (_, lang, toc_loc, doc_loc) = &lang_toc_doc[i];
         let output_loc = frontmatter.format(path_format, stem, lang);
         let serialised = frontmatter.serialise();
         let tags_loc = frontmatter.format(path_format, "tags", lang);
         let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
 
-        link_list.push((lang, link));
+        link_list.push((*lang, link));
         ExtraData {
             lang,
             other_langs: exclude(lang_list.as_str(), lang),
-            toc_loc: lang_toc_doc[i].1.as_str(),
-            doc_loc: lang_toc_doc[i].2.as_str(),
+            toc_loc,
+            doc_loc,
             output_loc,
             tags_loc,
             frontmatter_serialised: serialised,
@@ -325,20 +332,21 @@ fn compile_post(config: &Config, pathstr: &str, post_formatter: &str, path_forma
     }));
 
     // Linker step (put the ToC, doc, and disparate parts together)
-    output_locs.iter().for_each(|data| {
+    output_locs.iter().enumerate().for_each(|(i, data)| {
         println!("###### {:?} ######", data.lang);
-        let target = [x.public_dir, "/", data.output_loc.as_str()].join("");
-        if false {
+        let (out_of_date, _, _, _) = &lang_toc_doc[i];
+        if *out_of_date {
+            let target = [x.public_dir, "/", data.output_loc.as_str()].join("");
             make_parent(target.as_str()).or_die(1);
+            let linker_stdout = link_post(
+                post_formatter,
+                &x,
+                target.as_str(),
+                &link_list,
+                data,
+            );
+            eprintln!("{}", linker_stdout);
         }
-        let linker_stdout = link_post(
-            post_formatter,
-            &x,
-            target.as_str(),
-            &link_list,
-            data,
-        );
-        eprintln!("{}", linker_stdout);
 
         //println!("{}", view.body.join(""));
         //println!("{}", frontmatter_string);

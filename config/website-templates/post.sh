@@ -83,6 +83,8 @@ date_updated="$( post_lookuP "date-updated" )" || exit 1
         tags="$( post_lookuP "tags" )" || exit 1
        title="$( post_lookuP "title" )" || exit 1
 
+#printf %s\\n "$@"; exit
+
 <<EOF cat - >"${local_output_path}"
 <!DOCTYPE html>
 <html lang="en">
