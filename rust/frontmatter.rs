@@ -96,6 +96,8 @@ impl<'a> Frontmatter<'a> {
             key_list.push_and_check("date-updated");
             value_list.push_and_check(Value::DateTime(modified));
         }
+
+        tag_list.sort_unstable();
         debug_assert_eq!(key_list.len(), value_list.len());
         Ok(Self {
             keys: key_list,

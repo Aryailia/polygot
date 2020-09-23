@@ -54,7 +54,7 @@ macro_rules! define_config {
     (
         @optional {
             $($o_short:literal $o_long:literal
-               $o_id:ident: $o_type:ty = $o_default:expr => $($to_set:expr)?,)*
+               $o_id:ident: $o_type:ty = $o_default:expr => $to_set:expr,)*
         }
         @to_be_required {
             $($r_short:literal $r_long:literal $r_id:ident,)*
@@ -78,7 +78,7 @@ macro_rules! define_config {
         fn parse_option(arg_iter: &mut env::Args, config: &mut Config, option: &str) -> Result<(), String> {
             match option {
                 "h" | "help" => {}
-                $($o_short | $o_long => config.$o_id = $o_default,)*
+                $($o_short | $o_long => config.$o_id = $to_set,)*
                 $($r_short | $r_long => config.$r_id = arg_iter.next(),)*
                 _ => {
                     return Err(format!(

@@ -230,17 +230,14 @@ fn to_datetime(time_result: io::Result<SystemTime>, msg: String) -> Result<DateT
     let time = system_time
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|err| format!("{} is before UNIX epoch. {}", msg, err))?;
-    let secs = time.as_secs() / 1_000_000_000;
+    let secs = time.as_nanos() / 1_000_000_000;
     let nano = time.as_nanos() % 1_000_000_000;
-    if secs > i64::MAX as u64 {
+    if secs > i64::MAX as u128 {
         return Err(format!(
             "{} is too big and is not supported by the 'chrono' crate",
             msg
         ));
     }
-    //println!("s {:?}", Utc.timestamp(time.as_secs(), 0));
-    //println!("ns{:?}", Utc.timestamp(time.as_secs(), time.as_nanos()));
-
     Ok(Utc.timestamp(secs as i64, nano as u32))
 }
 

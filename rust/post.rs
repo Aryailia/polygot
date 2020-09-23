@@ -64,6 +64,8 @@ impl<'a> Post<'a> {
         }
         parts.push_and_check((toadd_lang, toadd_rstr));
 
+        unique_langs.sort_unstable();
+
         // Transpose 'parts' from by parts-by-langs to langs-by-parts (PostView)
         let lang_count = unique_langs.len();
         let mut view_list = Vec::with_capacity(std::cmp::max(lang_count, 1));
