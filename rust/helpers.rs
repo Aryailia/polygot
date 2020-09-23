@@ -1,4 +1,6 @@
 use crate::traits::VecExt;
+use std::fs;
+use std::path::Path;
 
 // @TODO test on windows
 pub const TAG_BLACKLIST: [char; 4] = [
@@ -38,3 +40,36 @@ pub fn parse_tags_and_push<'a>(
     }
     Ok(tags_added)
 }
+
+pub fn create_parent_dir(location: &str) -> Result<(), String> {
+    if let Some(parent) = Path::new(location).parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Cannot create directory {:?}. {}", parent.display(), err))?;
+    }
+    Ok(())
+}
+
+
+pub fn check_is_file(pathstr: &str) -> Result<(), String> {
+    if !Path::new(pathstr).is_file() {
+        Path::new(pathstr)
+            .metadata()
+            .map_err(|err| format!("'{:?}' is not a valid file. {}", pathstr, err))?;
+    }
+    Ok(())
+}
+
+pub fn check_is_dir(pathstr: &str, error_msg: &str) -> Result<(), String> {
+    if !Path::new(pathstr).is_dir() {
+        Path::new(pathstr)
+            .metadata()
+            .map_err(|err| {
+                format!(
+                    "`{} {:?}` is not a valid directory. {}",
+                    error_msg, pathstr, err
+                )
+            })?;
+    }
+    Ok(())
+}
+
