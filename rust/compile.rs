@@ -1,3 +1,4 @@
+// This brings the disparate parts together to do the compile pipeline.
 use chrono::{DateTime, TimeZone, Utc};
 use std::{fs, io, path::Path, time::SystemTime};
 
@@ -5,22 +6,35 @@ use super::RequiredConfigs;
 use crate::fileapi::{command_run, FileApi};
 use crate::frontmatter::Frontmatter;
 use crate::helpers::create_parent_dir;
-use crate::post::{Post, PostView};
+use crate::post::Post;
 use crate::traits::{ResultExt, VecExt};
 
 //run: ../build.sh
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
+    // The relative relationship is:
+    // - one source text <> one 'post' <> many langs/views
+    // - one lang <> one view
+    // - one views <> one toc and one body (one post <> lang_num * 2 sections)
+    // - one view <> one linked output file
+
+    // C analogy: read the meta source file
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
-    let post_metadata = parse_text_to_post(config, pathstr, text.as_str());
 
-    let (out_of_date, html_sections) = parse_and_cache_sections(config, &post_metadata);
+    // C analogy: "parse" into views
+    let (api, path, post) = parse_text_to_post(config, pathstr, text.as_str());
+    // C analogy: "compile" each view into even more sections ("obj")
+    //            "compiling" is done by external programs (like Asciidoctor)
+    let (out_of_date, html_sections) = parse_and_cache_sections(config, &api, &path, &post);
+    // C analogy: "link" sections to single html per view (many "executables")
     if out_of_date {
         link_view_sections(
             config,
+            &api,
+            &path,
             &html_sections,
-            &post_metadata,
+            &post,
             output_template,
             linker_loc,
         );
@@ -29,70 +43,47 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
 
 /******************************************************************************/
 // Parse the custom markup
-//
-// C analogy: Similar to the lexer, lex into views + file metadata
-struct PostWrapper<'a> {
-    api: FileApi,
-    views: Vec<PostView<'a>>,
-    lang_list: Vec<&'a str>,
-    stem: &'a str,
-    pathstr: &'a str,
-    created: DateTime<Utc>,
-    modified: DateTime<Utc>,
-}
-
-fn parse_text_to_post<'a>(
+#[inline]
+fn parse_text_to_post<'a, 'b>(
     config: &RequiredConfigs,
-    pathstr: &'a str,
+    pathstr: &'b str,
     text: &'a str,
-) -> PostWrapper<'a> {
-    let (stem, ext, created, modified) = analyse_path(pathstr).or_die(1);
-    let api = FileApi::from_filename(config.api_dir, ext).or_die(1);
+) -> (FileApi, PathWrapper<'b>, Post<'a>) {
+    // @TODO check if constructor is needed
+    let path = PathWrapper::wrap(pathstr).or_die(1);
+    let api = FileApi::from_filename(config.api_dir, path.extension).or_die(1);
     let comment_marker = api.comment().or_die(1);
     let post = Post::new(text, comment_marker.as_str())
-        .map_err(|err| err.with_filename(pathstr))
+        .map_err(|err| err.with_filename(path.pathstr))
         .or_die(1);
-
-    PostWrapper {
-        api,
-        views: post.views,
-        lang_list: post.lang_list,
-        stem,
-        pathstr,
-        created,
-        modified,
-    }
+    (api, path, post)
 }
 
 /******************************************************************************/
 // For each view, now that we have what should be source code,
 // run the parser/compiler associated with the filetype of the source
-//
-// C analogy: Similar to compiling to obj files, compiles markup to HTML parts
 type Section<'a> = (&'a str, String, String);
 
+#[inline]
 fn parse_and_cache_sections<'a>(
     config: &RequiredConfigs,
-    post: &PostWrapper<'a>,
+    api: &FileApi,
+    post_path: &PathWrapper,
+    post: &Post<'a>,
 ) -> (bool, Vec<Section<'a>>) {
     let mut to_html_metadata = Vec::with_capacity(post.views.len());
     let cache = config.cache_dir;
     let mut out_of_date = config.force;
     to_html_metadata.extend(post.views.iter().map(|view| {
         let lang = view.lang.unwrap_or("");
-        let toc_loc = [cache, "/toc/", lang, "/", post.stem, ".html"].join("");
-        let doc_loc = [cache, "/doc/", lang, "/", post.stem, ".html"].join("");
+        let toc_loc = [cache, "/toc/", lang, "/", post_path.stem, ".html"].join("");
+        let doc_loc = [cache, "/doc/", lang, "/", post_path.stem, ".html"].join("");
 
         // Always recompile/etc if --force
 
-        out_of_date |= analyse_path(toc_loc.as_str())
-            .and_then(|t| analyse_path(doc_loc.as_str()).map(|d| (t.3, d.3)))
-            .map(|(toc_modified, doc_modified)| {
-                //println!("=== {:?} ===", toc_loc);
-                //println!("{:?} {:?} {:?}", post.modified, toc_modified, doc_modified);
-                //println!("{} {}", post.modified > toc_modified, post.modified > doc_modified);
-                post.modified > toc_modified || post.modified > doc_modified
-            })
+        out_of_date |= PathWrapper::wrap(toc_loc.as_str())
+            .and_then(|t| PathWrapper::wrap(doc_loc.as_str()).map(|d| (t, d)))
+            .map(|(toc, doc)| post_path.updated > toc.updated || post_path.updated > doc.updated)
             .unwrap_or(true); // compile if they do not read file/etc.
         (lang, toc_loc, doc_loc)
     }));
@@ -103,8 +94,7 @@ fn parse_and_cache_sections<'a>(
             eprintln!("compiling {} {:?} and {:?}", lang, toc_loc, doc_loc);
             create_parent_dir(toc_loc).or_die(1);
             create_parent_dir(doc_loc).or_die(1);
-            post.api
-                .compile(view.body.as_slice(), toc_loc, doc_loc)
+            api.compile(view.body.as_slice(), toc_loc, doc_loc)
                 .or_die(1);
         });
     }
@@ -113,9 +103,6 @@ fn parse_and_cache_sections<'a>(
 
 /******************************************************************************/
 // For each view, join the disparate sections into the final product
-//
-// C Analogy: Similar to linker combines obj files, takes sections (HTML hunks)
-//            and combines them into the final HTML foreach post view
 struct ViewMetadata<'a> {
     lang: &'a str,
     other_langs: (&'a str, &'a str),
@@ -126,10 +113,13 @@ struct ViewMetadata<'a> {
     frontmatter_serialised: String,
 }
 
+#[inline]
 fn link_view_sections(
     config: &RequiredConfigs,
-    lang_toc_doc: &[Section],
-    post: &PostWrapper,
+    api: &FileApi,
+    post_path: &PathWrapper,
+    sections_metadata: &[Section],
+    post: &Post,
     path_format: &str,
     linker_loc: &str,
 ) {
@@ -141,16 +131,16 @@ fn link_view_sections(
     let mut link_list = Vec::with_capacity(len);
     let mut output_locs = Vec::with_capacity(len);
     output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
-        let source = post.api.frontmatter(view.body.as_slice()).or_die(1);
-        let frontmatter = Frontmatter::new(source.as_str(), post.created, post.modified)
+        let source = api.frontmatter(view.body.as_slice()).or_die(1);
+        let frontmatter = Frontmatter::new(source.as_str(), post_path.created, post_path.updated)
             // @TODO frontmatter string instead for context since
             //       frontmatter is extracted.
             //       Or perhaps make frontmatter scripts retain newlines
             //       so that this works properly?
-            .map_err(|err| err.with_filename(post.pathstr))
+            .map_err(|err| err.with_filename(post_path.pathstr))
             .or_die(1);
-        let (lang, toc_loc, doc_loc) = &lang_toc_doc[i];
-        let output_loc = frontmatter.format(path_format, post.stem, lang);
+        let (lang, toc_loc, doc_loc) = &sections_metadata[i];
+        let output_loc = frontmatter.format(path_format, post_path.stem, lang);
         let serialised = frontmatter.serialise();
         let tags_loc = frontmatter.format(path_format, "tags", lang);
         let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
@@ -169,13 +159,15 @@ fn link_view_sections(
 
     // Linker step (put the ToC, doc, and disparate parts together)
     output_locs.iter().enumerate().for_each(|(i, data)| {
-        let (lang, _, _) = &lang_toc_doc[i];
+        let (lang, _, _) = &sections_metadata[i];
         let target = [config.public_dir, "/", data.output_loc.as_str()].join("");
         eprintln!("linking {} {:?}", lang, target);
         create_parent_dir(target.as_str()).or_die(1);
         let linker_stdout =
             link_view(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
-        eprintln!("{}", linker_stdout);
+        if !linker_stdout.is_empty() {
+            eprintln!("{}", linker_stdout);
+        }
 
         //println!("{}", view.body.join(""));
         //println!("{}", frontmatter_string);
@@ -186,8 +178,6 @@ fn link_view_sections(
 
 // 'link_view_sections()' but for a single view
 // Returns the output of the command (probably just ignore Ok() case)
-//
-// Its own function for better indentation, so just inline it
 #[inline]
 fn link_view(
     linker_command: &str,
@@ -243,41 +233,57 @@ fn to_datetime(time_result: io::Result<SystemTime>, msg: String) -> Result<DateT
     Ok(Utc.timestamp(secs as i64, nano as u32))
 }
 
-fn analyse_path(pathstr: &str) -> Result<(&str, &str, DateTime<Utc>, DateTime<Utc>), String> {
-    let path = Path::new(pathstr);
-    let stem_os = path.file_stem().ok_or_else(|| {
-        format!(
-            "The post path {:?} does not is not a path to a file",
-            pathstr
-        )
-    })?;
-    let ext_os = path
-        .extension()
-        .ok_or_else(|| format!("The post {:?} does not have a file extension", pathstr))?;
+struct PathWrapper<'a> {
+    pathstr: &'a str,
+    stem: &'a str,
+    extension: &'a str,
+    created: DateTime<Utc>,
+    updated: DateTime<Utc>,
+}
 
-    let file_stem = stem_os
-        .to_str()
-        .ok_or_else(|| format!("The stem {:?} in {:?} has invalid UTF8", stem_os, pathstr))?;
-    let extension = ext_os.to_str().ok_or_else(|| {
-        format!(
-            "The extension {:?} in {:?} has invalid UTF8",
-            ext_os, pathstr
-        )
-    })?;
+impl<'a> PathWrapper<'a> {
+    fn wrap(pathstr: &'a str) -> Result<Self, String> {
+        let path = Path::new(pathstr);
+        let stem_os = path.file_stem().ok_or_else(|| {
+            format!(
+                "The post path {:?} does not is not a path to a file",
+                pathstr
+            )
+        })?;
+        let ext_os = path
+            .extension()
+            .ok_or_else(|| format!("The post {:?} does not have a file extension", pathstr))?;
 
-    let metadata = path
-        .metadata()
-        .map_err(|err| format!("Cannot read metadata of {:?}. {}", pathstr, err))?;
-    let modified = to_datetime(
-        metadata.modified(),
-        format!("The file created date of {:?}", pathstr),
-    )?;
-    let created = to_datetime(
-        metadata.created(),
-        format!("The file last modified date metadata of {:?}", pathstr),
-    )?;
+        let stem = stem_os
+            .to_str()
+            .ok_or_else(|| format!("The stem {:?} in {:?} has invalid UTF8", stem_os, pathstr))?;
+        let extension = ext_os.to_str().ok_or_else(|| {
+            format!(
+                "The extension {:?} in {:?} has invalid UTF8",
+                ext_os, pathstr
+            )
+        })?;
 
-    Ok((file_stem, extension, created, modified))
+        let metadata = path
+            .metadata()
+            .map_err(|err| format!("Cannot read metadata of {:?}. {}", pathstr, err))?;
+        let updated = to_datetime(
+            metadata.modified(),
+            format!("The file created date of {:?}", pathstr),
+        )?;
+        let created = to_datetime(
+            metadata.created(),
+            format!("The file last updated date metadata of {:?}", pathstr),
+        )?;
+
+        Ok(Self {
+            pathstr,
+            stem,
+            extension,
+            created,
+            updated,
+        })
+    }
 }
 
 // Check tests for use case
