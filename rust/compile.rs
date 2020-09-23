@@ -1,83 +1,160 @@
 use chrono::{DateTime, TimeZone, Utc};
 use std::{fs, io, path::Path, time::SystemTime};
 
-use super::{Config, RequiredConfigs};
+use super::RequiredConfigs;
 use crate::fileapi::{command_run, FileApi};
 use crate::frontmatter::Frontmatter;
-use crate::helpers::{check_is_dir, check_is_file, create_parent_dir};
+use crate::helpers::create_parent_dir;
 use crate::post::{Post, PostView};
 use crate::traits::{ResultExt, VecExt};
 
 //run: ../build.sh
-pub fn compile(config: &Config, pathstr: &str, post_formatter: &str, path_format: &str) {
-    let (stem, ext, created, modified) = analyse_path(pathstr).or_die(1);
+pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
     let text = fs::read_to_string(pathstr)
         .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
         .or_die(1);
-    let x = RequiredConfigs::unwrap(config);
-    // @VOLATILE sync with 'define_config'
-    check_is_dir(x.cache_dir, "--cache-dir").or_die(1);
-    check_is_file(x.api_dir).or_die(1);
+    let post_metadata = parse_text_to_post(config, pathstr, text.as_str());
 
-    let api = FileApi::from_filename(x.api_dir, ext).or_die(1);
+    let html_sections = parse_and_cache_sections(config, &post_metadata);
+    link_view_sections(
+        config,
+        &html_sections,
+        &post_metadata,
+        output_template,
+        linker_loc,
+    );
+}
+
+/******************************************************************************/
+// Parse the custom markup
+//
+// C analogy: Similar to the lexer, lex into views + file metadata
+struct PostWrapper<'a> {
+    api: FileApi,
+    views: Vec<PostView<'a>>,
+    lang_list: Vec<&'a str>,
+    stem: &'a str,
+    pathstr: &'a str,
+    created: DateTime<Utc>,
+    modified: DateTime<Utc>,
+}
+
+fn parse_text_to_post<'a>(
+    config: &RequiredConfigs,
+    pathstr: &'a str,
+    text: &'a str,
+) -> PostWrapper<'a> {
+    let (stem, ext, created, modified) = analyse_path(pathstr).or_die(1);
+    let api = FileApi::from_filename(config.api_dir, ext).or_die(1);
     let comment_marker = api.comment().or_die(1);
-
-    let post = Post::new(text.as_str(), comment_marker.as_str())
+    let post = Post::new(text, comment_marker.as_str())
         .map_err(|err| err.with_filename(pathstr))
         .or_die(1);
 
-    let len = post.views.len();
-    let mut lang_toc_doc = Vec::with_capacity(len);
-    lang_toc_doc.extend(post.views.iter().map(|view| {
+    PostWrapper {
+        api,
+        views: post.views,
+        lang_list: post.lang_list,
+        stem,
+        pathstr,
+        created,
+        modified,
+    }
+}
+
+/******************************************************************************/
+// For each view, now that we have what should be source code,
+// run the parser/compiler associated with the filetype of the source
+//
+// C analogy: Similar to compiling to obj files, compiles markup to HTML parts
+type Section<'a> = (bool, &'a str, String, String);
+
+fn parse_and_cache_sections<'a>(
+    config: &RequiredConfigs,
+    post: &PostWrapper<'a>,
+) -> Vec<Section<'a>> {
+    let mut to_html_metadata = Vec::with_capacity(post.views.len());
+    let cache = config.cache_dir;
+    to_html_metadata.extend(post.views.iter().map(|view| {
         let lang = view.lang.unwrap_or("");
-        let toc_loc = [x.cache_dir, "/toc/", lang, "/", stem, ".html"].join("");
-        let doc_loc = [x.cache_dir, "/doc/", lang, "/", stem, ".html"].join("");
+        let toc_loc = [cache, "/toc/", lang, "/", post.stem, ".html"].join("");
+        let doc_loc = [cache, "/doc/", lang, "/", post.stem, ".html"].join("");
 
         // Always recompile/etc if --force
 
-        let out_of_date = config.force || analyse_path(toc_loc.as_str())
-            .and_then(|t| analyse_path(doc_loc.as_str()).map(|d| (t.3, d.3)))
-            .map(|(toc_modified, doc_modified)| {
-                //println!("=== {:?} ===", toc_loc);
-                //println!("{:?} {:?} {:?}", modified, toc_modified, doc_modified);
-                //println!("{} {}", modified > toc_modified, modified > doc_modified);
-                modified > toc_modified || modified > doc_modified
-            }).unwrap_or(true); // compile if they do not read file/etc.
+        let out_of_date = config.force
+            || analyse_path(toc_loc.as_str())
+                .and_then(|t| analyse_path(doc_loc.as_str()).map(|d| (t.3, d.3)))
+                .map(|(toc_modified, doc_modified)| {
+                    //println!("=== {:?} ===", toc_loc);
+                    //println!("{:?} {:?} {:?}", post.modified, toc_modified, doc_modified);
+                    //println!("{} {}", post.modified > toc_modified, post.modified > doc_modified);
+                    post.modified > toc_modified || post.modified > doc_modified
+                })
+                .unwrap_or(true); // compile if they do not read file/etc.
         (out_of_date, lang, toc_loc, doc_loc)
     }));
     // Compile step (makes table of contents and document itself)
     post.views.iter().enumerate().for_each(|(i, view)| {
-        let (out_of_date, _, toc_loc, doc_loc) = &lang_toc_doc[i];
+        let (out_of_date, _, toc_loc, doc_loc) = &to_html_metadata[i];
         if *out_of_date {
             eprintln!("compiling {:?} and {:?}", toc_loc, doc_loc);
-            make_parent(toc_loc).or_die(1);
-            make_parent(doc_loc).or_die(1);
-            api.compile(view.body.as_slice(), toc_loc, doc_loc).or_die(1);
+            create_parent_dir(toc_loc).or_die(1);
+            create_parent_dir(doc_loc).or_die(1);
+            post.api
+                .compile(view.body.as_slice(), toc_loc, doc_loc)
+                .or_die(1);
         }
     });
+    to_html_metadata
+}
 
+/******************************************************************************/
+// For each view, join the disparate sections into the final product
+//
+// C Analogy: Similar to linker combines obj files, takes sections (HTML hunks)
+//            and combines them into the final HTML foreach post view
+struct ViewMetadata<'a> {
+    lang: &'a str,
+    other_langs: (&'a str, &'a str),
+    toc_loc: &'a str,
+    doc_loc: &'a str,
+    output_loc: String,
+    tags_loc: String,
+    frontmatter_serialised: String,
+}
+
+fn link_view_sections(
+    config: &RequiredConfigs,
+    lang_toc_doc: &[Section],
+    post: &PostWrapper,
+    path_format: &str,
+    linker_loc: &str,
+) {
     // Pre-generate the metadata for the linker
     // In particular, 'link' for all views is used by every other view
+    let len = post.views.len();
     let lang_list = post.lang_list.join(" ");
+
     let mut link_list = Vec::with_capacity(len);
     let mut output_locs = Vec::with_capacity(len);
     output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
-        let source = api.frontmatter(view.body.as_slice()).or_die(1);
-        let frontmatter = Frontmatter::new(source.as_str(), created, modified)
+        let source = post.api.frontmatter(view.body.as_slice()).or_die(1);
+        let frontmatter = Frontmatter::new(source.as_str(), post.created, post.modified)
             // @TODO frontmatter string instead for context since
             //       frontmatter is extracted.
             //       Or perhaps make frontmatter scripts retain newlines
             //       so that this works properly?
-            .map_err(|err| err.with_filename(pathstr))
+            .map_err(|err| err.with_filename(post.pathstr))
             .or_die(1);
         let (_, lang, toc_loc, doc_loc) = &lang_toc_doc[i];
-        let output_loc = frontmatter.format(path_format, stem, lang);
+        let output_loc = frontmatter.format(path_format, post.stem, lang);
         let serialised = frontmatter.serialise();
         let tags_loc = frontmatter.format(path_format, "tags", lang);
         let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
 
         link_list.push((*lang, link));
-        ExtraData {
+        ViewMetadata {
             lang,
             other_langs: exclude(lang_list.as_str(), lang),
             toc_loc,
@@ -93,15 +170,10 @@ pub fn compile(config: &Config, pathstr: &str, post_formatter: &str, path_format
         println!("###### {:?} ######", data.lang);
         let (out_of_date, _, _, _) = &lang_toc_doc[i];
         if *out_of_date {
-            let target = [x.public_dir, "/", data.output_loc.as_str()].join("");
-            make_parent(target.as_str()).or_die(1);
-            let linker_stdout = link_post(
-                post_formatter,
-                &x,
-                target.as_str(),
-                &link_list,
-                data,
-            );
+            let target = [config.public_dir, "/", data.output_loc.as_str()].join("");
+            create_parent_dir(target.as_str()).or_die(1);
+            let linker_stdout =
+                link_view(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
             eprintln!("{}", linker_stdout);
         }
 
@@ -112,41 +184,23 @@ pub fn compile(config: &Config, pathstr: &str, post_formatter: &str, path_format
     });
 }
 
-fn make_parent(location: &str) -> Result<(), String> {
-    if let Some(parent) = Path::new(location).parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("Cannot create directory {:?}. {}", parent.display(), err))?;
-    }
-    Ok(())
-}
-
-// Just to make passing arguments easier
-struct ExtraData<'a> {
-    lang: &'a str,
-    other_langs: (&'a str, &'a str),
-    toc_loc: &'a str,
-    doc_loc: &'a str,
-    output_loc: String,
-    tags_loc: String,
-    frontmatter_serialised: String,
-}
-
+// Returns the output of the command (probably just ignore Ok() case)
+// New function for better spacing
 #[inline]
-// Returns the output of the command (probably just ignore this)
-fn link_post(
-    post_formatter: &str,
-    x: &RequiredConfigs,
+fn link_view(
+    linker_command: &str,
+    config: &RequiredConfigs,
     local_output_loc: &str,
     link_list: &[(&str, String)],
-    data: &ExtraData,
-) -> String {
+    data: &ViewMetadata,
+) -> Result<String, String> {
     let relative_output_loc = data.output_loc.as_str();
 
     let base = [
-        ["domain:", x.domain].join(""),
+        ["domain:", config.domain].join(""),
         ["local_toc_path:", data.toc_loc].join(""),
         ["local_doc_path:", data.doc_loc].join(""),
-        ["local_templates_dir:", x.templates_dir].join(""),
+        ["local_templates_dir:", config.templates_dir].join(""),
         ["local_output_path:", local_output_loc].join(""),
         ["relative_output_url:", relative_output_loc].join(""),
         ["relative_tags_url:", data.tags_loc.as_str()].join(""),
@@ -164,7 +218,7 @@ fn link_post(
             .map(|(_, other_view_link)| other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
-    command_run(Path::new(post_formatter), None, &api_keyvals).or_die(1)
+    command_run(Path::new(linker_command), None, &api_keyvals)
 }
 
 /******************************************************************************

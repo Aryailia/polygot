@@ -17,7 +17,7 @@ mod post;
 mod traits;
 
 use compile::compile;
-use helpers::check_is_file;
+use helpers::{check_is_dir, check_is_file};
 use traits::{ResultExt, VecExt};
 
 const NAME: &str = "blog";
@@ -60,7 +60,7 @@ macro_rules! define_config {
             $($r_short:literal $r_long:literal $r_id:ident,)*
         }
     ) => {
-        //#[derive(Debug)]
+        #[derive(Debug)]
         pub struct Config {
             $($o_id: $o_type,)*
             $($r_id: Option<String>,)*
@@ -93,12 +93,15 @@ macro_rules! define_config {
         // Put in a struct so that we can keep the variable names
         // the same between 'parse_option' and use in 'compile_post'
         // Naming chosen for the sentence: 'RequireConfigs::unwrap(config)'
+        #[derive(Debug)]
         pub struct RequiredConfigs<'a> {
+            $($o_id: $o_type,)*
             $($r_id: &'a str,)*
         }
         impl<'a> RequiredConfigs<'a> {
             fn unwrap(config: &'a Config) -> Self {
                 Self {
+                    $($o_id: config.$o_id,)*
                     $($r_id: config.$r_id.as_ref()
                         .ok_or("--api-dir is a required option")
                         .or_die(1)
@@ -153,11 +156,17 @@ fn main() {
 
         4, "compile-markup" => {
             let source = args.get(1).unwrap();
-            let post_formatter = args.get(2).unwrap();
-            let path_formatter = args.get(3).unwrap();
-            check_is_file(post_formatter.as_str()).or_die(1);
+            let linker_loc = args.get(2).unwrap();
+            let output_template = args.get(3).unwrap();
+            let unwrapped_config = RequiredConfigs::unwrap(&config);
 
-            compile(&config, &source, &post_formatter, &path_formatter);
+            check_is_file(linker_loc.as_str()).or_die(1);
+            // @VOLATILE sync with 'define_config'
+            check_is_dir(unwrapped_config.cache_dir, "--cache-dir").or_die(1);
+            check_is_file(unwrapped_config.api_dir).or_die(1);
+
+
+            compile(&unwrapped_config, &source, &linker_loc, &output_template);
         }
     });
 }
