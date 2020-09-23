@@ -15,14 +15,16 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
         .or_die(1);
     let post_metadata = parse_text_to_post(config, pathstr, text.as_str());
 
-    let html_sections = parse_and_cache_sections(config, &post_metadata);
-    link_view_sections(
-        config,
-        &html_sections,
-        &post_metadata,
-        output_template,
-        linker_loc,
-    );
+    let (out_of_date, html_sections) = parse_and_cache_sections(config, &post_metadata);
+    if out_of_date {
+        link_view_sections(
+            config,
+            &html_sections,
+            &post_metadata,
+            output_template,
+            linker_loc,
+        );
+    }
 }
 
 /******************************************************************************/
@@ -67,14 +69,15 @@ fn parse_text_to_post<'a>(
 // run the parser/compiler associated with the filetype of the source
 //
 // C analogy: Similar to compiling to obj files, compiles markup to HTML parts
-type Section<'a> = (bool, &'a str, String, String);
+type Section<'a> = (&'a str, String, String);
 
 fn parse_and_cache_sections<'a>(
     config: &RequiredConfigs,
     post: &PostWrapper<'a>,
-) -> Vec<Section<'a>> {
+) -> (bool, Vec<Section<'a>>) {
     let mut to_html_metadata = Vec::with_capacity(post.views.len());
     let cache = config.cache_dir;
+    let mut out_of_date = config.force;
     to_html_metadata.extend(post.views.iter().map(|view| {
         let lang = view.lang.unwrap_or("");
         let toc_loc = [cache, "/toc/", lang, "/", post.stem, ".html"].join("");
@@ -82,31 +85,30 @@ fn parse_and_cache_sections<'a>(
 
         // Always recompile/etc if --force
 
-        let out_of_date = config.force
-            || analyse_path(toc_loc.as_str())
-                .and_then(|t| analyse_path(doc_loc.as_str()).map(|d| (t.3, d.3)))
-                .map(|(toc_modified, doc_modified)| {
-                    //println!("=== {:?} ===", toc_loc);
-                    //println!("{:?} {:?} {:?}", post.modified, toc_modified, doc_modified);
-                    //println!("{} {}", post.modified > toc_modified, post.modified > doc_modified);
-                    post.modified > toc_modified || post.modified > doc_modified
-                })
-                .unwrap_or(true); // compile if they do not read file/etc.
-        (out_of_date, lang, toc_loc, doc_loc)
+        out_of_date |= analyse_path(toc_loc.as_str())
+            .and_then(|t| analyse_path(doc_loc.as_str()).map(|d| (t.3, d.3)))
+            .map(|(toc_modified, doc_modified)| {
+                //println!("=== {:?} ===", toc_loc);
+                //println!("{:?} {:?} {:?}", post.modified, toc_modified, doc_modified);
+                //println!("{} {}", post.modified > toc_modified, post.modified > doc_modified);
+                post.modified > toc_modified || post.modified > doc_modified
+            })
+            .unwrap_or(true); // compile if they do not read file/etc.
+        (lang, toc_loc, doc_loc)
     }));
     // Compile step (makes table of contents and document itself)
-    post.views.iter().enumerate().for_each(|(i, view)| {
-        let (out_of_date, _, toc_loc, doc_loc) = &to_html_metadata[i];
-        if *out_of_date {
-            eprintln!("compiling {:?} and {:?}", toc_loc, doc_loc);
+    if out_of_date {
+        post.views.iter().enumerate().for_each(|(i, view)| {
+            let (lang, toc_loc, doc_loc) = &to_html_metadata[i];
+            eprintln!("compiling {} {:?} and {:?}", lang, toc_loc, doc_loc);
             create_parent_dir(toc_loc).or_die(1);
             create_parent_dir(doc_loc).or_die(1);
             post.api
                 .compile(view.body.as_slice(), toc_loc, doc_loc)
                 .or_die(1);
-        }
-    });
-    to_html_metadata
+        });
+    }
+    (out_of_date, to_html_metadata)
 }
 
 /******************************************************************************/
@@ -147,7 +149,7 @@ fn link_view_sections(
             //       so that this works properly?
             .map_err(|err| err.with_filename(post.pathstr))
             .or_die(1);
-        let (_, lang, toc_loc, doc_loc) = &lang_toc_doc[i];
+        let (lang, toc_loc, doc_loc) = &lang_toc_doc[i];
         let output_loc = frontmatter.format(path_format, post.stem, lang);
         let serialised = frontmatter.serialise();
         let tags_loc = frontmatter.format(path_format, "tags", lang);
@@ -167,15 +169,13 @@ fn link_view_sections(
 
     // Linker step (put the ToC, doc, and disparate parts together)
     output_locs.iter().enumerate().for_each(|(i, data)| {
-        println!("###### {:?} ######", data.lang);
-        let (out_of_date, _, _, _) = &lang_toc_doc[i];
-        if *out_of_date {
-            let target = [config.public_dir, "/", data.output_loc.as_str()].join("");
-            create_parent_dir(target.as_str()).or_die(1);
-            let linker_stdout =
-                link_view(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
-            eprintln!("{}", linker_stdout);
-        }
+        let (lang, _, _) = &lang_toc_doc[i];
+        let target = [config.public_dir, "/", data.output_loc.as_str()].join("");
+        eprintln!("linking {} {:?}", lang, target);
+        create_parent_dir(target.as_str()).or_die(1);
+        let linker_stdout =
+            link_view(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
+        eprintln!("{}", linker_stdout);
 
         //println!("{}", view.body.join(""));
         //println!("{}", frontmatter_string);
@@ -184,8 +184,10 @@ fn link_view_sections(
     });
 }
 
+// 'link_view_sections()' but for a single view
 // Returns the output of the command (probably just ignore Ok() case)
-// New function for better spacing
+//
+// Its own function for better indentation, so just inline it
 #[inline]
 fn link_view(
     linker_command: &str,
