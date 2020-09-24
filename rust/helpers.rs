@@ -66,33 +66,33 @@ pub fn create_parent_dir(location: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn check_is_file(pathstr: &str) -> Result<(), String> {
-    if !Path::new(pathstr).is_file() {
-        Path::new(pathstr)
-            .metadata()
-            .map_err(|err| {
-                [
-                    pathstr.escape().as_str(),
-                    " is not a valid file.\n",
-                    err.to_string().as_str(),
-                ].join("")
-            })?;
-    }
-    Ok(())
-}
-
-pub fn check_is_dir(pathstr: &str, error_msg: &str) -> Result<(), String> {
-    if !Path::new(pathstr).is_dir() {
-        Path::new(pathstr).metadata().map_err(|err| {
-            [
-                "`",
-                error_msg,
-                " ",
-                pathstr.escape().as_str(),
-                "` is not a valid directory.\n",
-                err.to_string().as_str(),
-            ].join("")
-        })?;
-    }
-    Ok(())
-}
+//pub fn check_is_file(pathstr: &str) -> Result<(), String> {
+//    if !Path::new(pathstr).is_file() {
+//        Path::new(pathstr)
+//            .metadata()
+//            .map_err(|err| {
+//                [
+//                    pathstr.escape().as_str(),
+//                    " is not a valid file.\n",
+//                    err.to_string().as_str(),
+//                ].join("")
+//            })?;
+//    }
+//    Ok(())
+//}
+//
+//pub fn check_is_dir(pathstr: &str, error_msg: &str) -> Result<(), String> {
+//    if !Path::new(pathstr).is_dir() {
+//        Path::new(pathstr).metadata().map_err(|err| {
+//            [
+//                "`",
+//                error_msg,
+//                " ",
+//                pathstr.escape().as_str(),
+//                "` is not a valid directory.\n",
+//                err.to_string().as_str(),
+//            ].join("")
+//        })?;
+//    }
+//    Ok(())
+//}

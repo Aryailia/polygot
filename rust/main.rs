@@ -17,7 +17,7 @@ mod post;
 mod traits;
 
 use compile::compile;
-use helpers::{check_is_dir, check_is_file, program_name};
+use helpers::program_name;
 use traits::{ResultExt, ShellEscape, VecExt};
 
 macro_rules! match_subcommands {
@@ -34,7 +34,7 @@ macro_rules! match_subcommands {
                         program_name(), arg, $arg_count, len
                     );
 
-                    exit(1);
+                    exit(1)
                 }
                 $block
             })*
@@ -142,18 +142,15 @@ define_config! {
 fn main() {
     let (config, args) = Config::parse_env().or_die(1);
 
-    // run: cargo run compare-last-updated a b
-    // run: cargo run sync-last-updated-of-first-to b a
-
     match_subcommands!(args {
         1, "now-rfc2822" => {
             println!("{}", Local::now().to_rfc2822());
         }
-        3, "compare-last-updated" => {
+        3, "is-first-newer-than" => {
             if compare_mtimes(args.get(1).unwrap(), args.get(2).unwrap()) {
-                exit(0);
+                exit(0)
             } else {
-                exit(1);
+                exit(1)
             }
         }
         3, "sync-last-updated-of-first-to" => {
@@ -165,13 +162,6 @@ fn main() {
             let linker_loc = args.get(2).unwrap();
             let output_template = args.get(3).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
-
-            check_is_file(linker_loc.as_str()).or_die(1);
-            // @VOLATILE sync with 'define_config'
-            check_is_dir(unwrapped_config.cache_dir, "--cache-dir").or_die(1);
-            check_is_file(unwrapped_config.api_dir).or_die(1);
-
-
             compile(&unwrapped_config, &source, &linker_loc, &output_template);
         }
     });
@@ -182,7 +172,7 @@ fn main() {
 //    eprintln!()
 //}
 
-//run: ../build.sh
+//run: ../build.sh build-rust clean compile-blog
 
 fn sync_last_updated(first: &str, date_source: &str) -> ! {
     Path::new(date_source)
@@ -218,7 +208,7 @@ fn compare_mtimes(source: &str, target: &str) -> bool {
         .map_err(|err| [target.escape().as_str(), ": ", err.to_string().as_str()].join(""))
         .or_die(1);
 
-    source_date < target_date
+    source_date > target_date
 }
 
 impl Config {

@@ -9,7 +9,7 @@ use crate::helpers::create_parent_dir;
 use crate::post::Post;
 use crate::traits::{ResultExt, ShellEscape, VecExt};
 
-//run: ../build.sh
+//run: ../build.sh build-rust clean compile-blog
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
@@ -59,6 +59,8 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
             output_targets.as_slice(),
             linker_loc,
         );
+    } else {
+        eprintln!("Skipping finished {} (use --force to not skip)", pathstr.escape());
     }
 }
 
@@ -85,6 +87,7 @@ fn parse_text_to_post<'a, 'b>(
 // run the parser/compiler associated with the filetype of the source
 type Section<'a> = (&'a str, String, String);
 
+use super::compare_mtimes;
 #[inline]
 fn parse_view_sections_metadata<'a>(
     config: &RequiredConfigs,
@@ -92,19 +95,16 @@ fn parse_view_sections_metadata<'a>(
     post: &Post<'a>,
 ) -> (bool, Vec<Section<'a>>) {
     let mut to_html_metadata = Vec::with_capacity(post.views.len());
-    let cache = config.cache_dir;
-    let mut out_of_date = config.force;
+    let mut out_of_date = config.force; // Always recompile/etc if --force
+
     to_html_metadata.extend(post.views.iter().map(|view| {
         let lang = view.lang.unwrap_or("");
-        let toc_loc = [cache, "/toc/", lang, "/", post_path.stem, ".html"].join("");
-        let doc_loc = [cache, "/doc/", lang, "/", post_path.stem, ".html"].join("");
+        let toc_loc = [config.cache_dir, "/toc/", lang, "/", post_path.stem, ".html"].join("");
+        let doc_loc = [config.cache_dir, "/doc/", lang, "/", post_path.stem, ".html"].join("");
 
-        // Always recompile/etc if --force
 
-        out_of_date |= PathWrapper::wrap(toc_loc.as_str())
-            .and_then(|t| PathWrapper::wrap(doc_loc.as_str()).map(|d| (t, d)))
-            .map(|(toc, doc)| post_path.updated > toc.updated || post_path.updated > doc.updated)
-            .unwrap_or(true); // compile if they do not read file/etc.
+        out_of_date |= compare_mtimes(post_path.pathstr, toc_loc.as_str())
+            || compare_mtimes(post_path.pathstr, doc_loc.as_str());
         (lang, toc_loc, doc_loc)
     }));
     // Compile step (makes table of contents and document itself)
