@@ -32,18 +32,31 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
 
     // C analogy: "parse" into views
     let (api, path, post) = parse_text_to_post(config, pathstr, text.as_str());
-    // C analogy: "compile" each view into even more sections ("obj")
-    //            "compiling" is done by external programs (like Asciidoctor)
-    let (out_of_date, html_sections) = parse_and_cache_sections(config, &api, &path, &post);
-    // C analogy: "link" sections to single html per view (many "executables")
+
+    // Parse some metadata
+    let (out_of_date, view_sections_metadata) = parse_view_sections_metadata(config, &path, &post);
+    let lang_list = post.lang_list.join(" ");
+    // Must verify frontmatter before 'htmlifying_view_sections()'
+    let (views_metadata, output_targets) = parse_view_metadata(
+        &api,
+        &path,
+        lang_list.as_str(),
+        view_sections_metadata.as_slice(),
+        &post,
+        output_template,
+    );
+
     if out_of_date {
-        link_view_sections(
+        // C analogy: "compile" each view into even more sections ("obj")
+        //            "compiling" done by external command (like Asciidoctor)
+        htmlify_view_sections(&api, &post, &view_sections_metadata);
+
+        // C analogy: "link" sections to one html per view (many "executables")
+        combine_sections_into_views(
             config,
-            &api,
-            &path,
-            &html_sections,
-            &post,
-            output_template,
+            view_sections_metadata.as_slice(),
+            views_metadata.as_slice(),
+            output_targets.as_slice(),
             linker_loc,
         );
     }
@@ -73,9 +86,8 @@ fn parse_text_to_post<'a, 'b>(
 type Section<'a> = (&'a str, String, String);
 
 #[inline]
-fn parse_and_cache_sections<'a>(
+fn parse_view_sections_metadata<'a>(
     config: &RequiredConfigs,
-    api: &FileApi,
     post_path: &PathWrapper,
     post: &Post<'a>,
 ) -> (bool, Vec<Section<'a>>) {
@@ -96,54 +108,54 @@ fn parse_and_cache_sections<'a>(
         (lang, toc_loc, doc_loc)
     }));
     // Compile step (makes table of contents and document itself)
-    if out_of_date {
-        post.views.iter().enumerate().for_each(|(i, view)| {
-            let (lang, toc_loc, doc_loc) = &to_html_metadata[i];
-            eprintln!(
-                "compiling {} {} and {}",
-                lang,
-                toc_loc.escape(),
-                doc_loc.escape()
-            );
-            create_parent_dir(toc_loc).or_die(1);
-            create_parent_dir(doc_loc).or_die(1);
-            api.compile(view.body.as_slice(), toc_loc, doc_loc)
-                .or_die(1);
-        });
-    }
     (out_of_date, to_html_metadata)
+}
+
+#[inline]
+fn htmlify_view_sections(api: &FileApi, post: &Post, metadata: &[Section]) {
+    post.views.iter().enumerate().for_each(|(i, view)| {
+        let (lang, toc_loc, doc_loc) = &metadata[i];
+        eprintln!(
+            "compiling {} {} and {}",
+            lang,
+            toc_loc.escape(),
+            doc_loc.escape()
+        );
+        create_parent_dir(toc_loc).or_die(1);
+        create_parent_dir(doc_loc).or_die(1);
+        api.compile(view.body.as_slice(), toc_loc, doc_loc)
+            .or_die(1);
+    });
 }
 
 /******************************************************************************/
 // For each view, join the disparate sections into the final product
-struct ViewMetadata<'a> {
+struct ViewMetadata<'a, 'b> {
     lang: &'a str,
-    other_langs: (&'a str, &'a str),
-    toc_loc: &'a str,
-    doc_loc: &'a str,
+    other_langs: (&'b str, &'b str),
+    toc_loc: &'b str,
+    doc_loc: &'b str,
     output_loc: String,
     tags_loc: String,
     frontmatter_serialised: String,
 }
 
 #[inline]
-fn link_view_sections(
-    config: &RequiredConfigs,
+fn parse_view_metadata<'a, 'b>(
     api: &FileApi,
     post_path: &PathWrapper,
-    sections_metadata: &[Section],
-    post: &Post,
+    lang_list: &'b str,
+    sections_metadata: &'b [Section<'a>],
+    post: &Post<'a>,
     path_format: &str,
-    linker_loc: &str,
-) {
+) -> (Vec<ViewMetadata<'a, 'b>>, Vec<(&'a str, String)>) {
     // Pre-generate the metadata for the linker
     // In particular, 'link' for all views is used by every other view
     let len = post.views.len();
-    let lang_list = post.lang_list.join(" ");
 
     let mut link_list = Vec::with_capacity(len);
-    let mut output_locs = Vec::with_capacity(len);
-    output_locs.extend(post.views.iter().enumerate().map(|(i, view)| {
+    let mut views_metadata = Vec::with_capacity(len);
+    views_metadata.extend(post.views.iter().enumerate().map(|(i, view)| {
         let source = api.frontmatter(view.body.as_slice()).or_die(1);
         let frontmatter = Frontmatter::new(source.as_str(), post_path.created, post_path.updated)
             // @TODO frontmatter string instead for context since
@@ -161,7 +173,7 @@ fn link_view_sections(
         link_list.push((*lang, link));
         ViewMetadata {
             lang,
-            other_langs: exclude(lang_list.as_str(), lang),
+            other_langs: exclude(lang_list, lang),
             toc_loc,
             doc_loc,
             output_loc,
@@ -169,15 +181,24 @@ fn link_view_sections(
             frontmatter_serialised: serialised,
         }
     }));
+    (views_metadata, link_list)
+}
 
+fn combine_sections_into_views(
+    config: &RequiredConfigs,
+    sections_metadata: &[Section],
+    views_metadata: &[ViewMetadata],
+    link_list: &[(&str, String)],
+    linker_loc: &str,
+) {
     // Linker step (put the ToC, doc, and disparate parts together)
-    output_locs.iter().enumerate().for_each(|(i, data)| {
+    views_metadata.iter().enumerate().for_each(|(i, data)| {
         let (lang, _, _) = &sections_metadata[i];
         let target = [config.public_dir, "/", data.output_loc.as_str()].join("");
         eprintln!("linking {} {}", lang, target.escape());
         create_parent_dir(target.as_str()).or_die(1);
         let linker_stdout =
-            link_view(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
+            link_view_sections(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
         if !linker_stdout.is_empty() {
             eprintln!("{}", linker_stdout);
         }
@@ -192,7 +213,7 @@ fn link_view_sections(
 // 'link_view_sections()' but for a single view
 // Returns the output of the command (probably just ignore Ok() case)
 #[inline]
-fn link_view(
+fn link_view_sections(
     linker_command: &str,
     config: &RequiredConfigs,
     local_output_loc: &str,

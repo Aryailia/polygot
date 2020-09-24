@@ -81,7 +81,7 @@ impl<'a> Frontmatter<'a> {
                                 "Dates must conform to RFC 2822 dates (internet format).\n",
                                 "You may wish to use `",
                                 super::NAME,
-                                "now-rfc2822`\n",
+                                " now-rfc2822`\n",
                                 err.to_string().as_str(),
                             ]
                             .join(""),

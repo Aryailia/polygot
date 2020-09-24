@@ -80,11 +80,15 @@ impl<'a, 'b> fmt::Display for FullParseError<'a, 'b> {
         let digit_len = last_row_string.len();
         let row_string = self.error.row.to_string();
 
-        let capacity = digit_len + 4    // + 4 for "--> "
+        let capacity = digit_len + 4      // + 4 for "--> "
             + self.filename.len()
-            + 1 + row_string.len()      // + 1 for colon
-            + 1 + last_row_string.len() // + 1 for colon
-            + 1                         // newline
+            + 1 + row_string.len()        // + 1 for colon
+            + if line_count > 1 {
+                2 + last_row_string.len() // + 2 for dot dot
+            } else {
+                0
+            }
+            + 1                           // newline
             ;
         let mut buffer = String::with_capacity(capacity);
         pad(&mut buffer, digit_len, "");
@@ -92,8 +96,11 @@ impl<'a, 'b> fmt::Display for FullParseError<'a, 'b> {
         buffer.push_str(self.filename);
         buffer.push(':');
         buffer.push_str(row_string.as_str());
-        buffer.push(':');
-        buffer.push_str(last_row_string.as_str());
+        if line_count > 1 {
+            buffer.push('.');
+            buffer.push('.');
+            buffer.push_str(last_row_string.as_str());
+        }
         buffer.push('\n');
 
         debug_assert_eq!(buffer.len(), capacity);
