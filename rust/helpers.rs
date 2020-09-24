@@ -42,6 +42,15 @@ pub fn parse_tags_and_push<'a>(
     Ok(tags_added)
 }
 
+pub fn program_name() -> String {
+    std::env::current_exe().map(|pathbuf| pathbuf.file_name()
+        .map(|p| p.to_string_lossy())
+        .unwrap_or(std::borrow::Cow::Borrowed(""))
+        .to_string()
+    ).unwrap_or("".to_string())
+}
+
+
 pub fn create_parent_dir(location: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(location).parent() {
         fs::create_dir_all(parent).map_err(|err| {

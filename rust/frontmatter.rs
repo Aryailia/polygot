@@ -2,7 +2,7 @@
 // 'tags' has a special format
 // NOTE: 'filename', 'lang' are reserved
 use crate::custom_errors::ParseError;
-use crate::helpers::parse_tags_and_push;
+use crate::helpers::{parse_tags_and_push, program_name};
 use crate::traits::{RangeExt, ShellEscape, VecExt};
 use chrono::{DateTime, Datelike, Utc};
 use std::borrow::Cow;
@@ -80,8 +80,8 @@ impl<'a> Frontmatter<'a> {
                             [
                                 "Dates must conform to RFC 2822 dates (internet format).\n",
                                 "You may wish to use `",
-                                super::NAME,
-                                " now-rfc2822`\n",
+                                program_name().as_str(),
+                                " now-rfc2822`.\n",
                                 err.to_string().as_str(),
                             ]
                             .join(""),
