@@ -18,7 +18,7 @@ mod traits;
 
 use compile::compile;
 use helpers::{check_is_dir, check_is_file};
-use traits::{ResultExt, VecExt};
+use traits::{ResultExt, ShellEscape, VecExt};
 
 const NAME: &str = "blog";
 
@@ -81,10 +81,14 @@ macro_rules! define_config {
                 $($o_short | $o_long => config.$o_id = $to_set,)*
                 $($r_short | $r_long => config.$r_id = arg_iter.next(),)*
                 _ => {
-                    return Err(format!(
-                        "'{}' is an invalid option\nTry `{} -h` for help",
-                        option, NAME,
-                    ))
+                    return Err([
+                        "'",
+                        option,
+                        "'",
+                        " is an invalid option\nTry `",
+                        NAME,
+                        " -h` for help",
+                    ].join(""))
                 }
             }
             Ok(())
@@ -183,7 +187,9 @@ fn sync_last_updated(first: &str, date_source: &str) -> ! {
         .metadata()
         .map(|metadata| FileTime::from_last_modification_time(&metadata))
         .and_then(|filetime| set_file_mtime(Path::new(first), filetime))
-        .map_err(|err| format!("'{}' {}", date_source, err))
+        .map_err(|err| [
+            date_source.escape().as_str(), ": ", err.to_string().as_str()
+        ].join(""))
         .or_die(1);
     exit(0)
 }
@@ -192,7 +198,9 @@ fn compare_mtimes(source: &str, target: &str) -> bool {
     let source_date = Path::new(source)
         .metadata()
         .map(|metadata| FileTime::from_last_modification_time(&metadata))
-        .map_err(|err| format!("'{}' {}", source, err))
+        .map_err(|err| [
+            source.escape().as_str(), ": ", err.to_string().as_str()
+        ].join(""))
         .or_die(1);
 
     let target_date = Path::new(target)
@@ -202,7 +210,9 @@ fn compare_mtimes(source: &str, target: &str) -> bool {
             ErrorKind::NotFound => Ok(FileTime::zero()),
             _ => Err(err),
         })
-        .map_err(|err| format!("'{}' {}", target, err))
+        .map_err(|err| [
+            target.escape().as_str(), ": ", err.to_string().as_str()
+        ].join(""))
         .or_die(1);
 
     source_date < target_date
@@ -278,9 +288,11 @@ impl<'a> Iterator for OptionsSplit<'a> {
 
 #[cfg(test)]
 mod integration_tests {
+    use crate::fileapi::FileApi;
     use crate::frontmatter::Frontmatter;
     use crate::post::Post;
     use crate::traits::ResultExt;
+    use chrono::Utc;
     #[test]
     fn compile_test() {
         let post = Post::new("hello", "//").or_die(1);

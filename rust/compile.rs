@@ -7,7 +7,7 @@ use crate::fileapi::{command_run, FileApi};
 use crate::frontmatter::Frontmatter;
 use crate::helpers::create_parent_dir;
 use crate::post::Post;
-use crate::traits::{ResultExt, VecExt};
+use crate::traits::{ResultExt, ShellEscape, VecExt};
 
 //run: ../build.sh
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
@@ -19,7 +19,15 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
 
     // C analogy: read the meta source file
     let text = fs::read_to_string(pathstr)
-        .map_err(|err| format!("Cannot read {:?}. {}", pathstr, err))
+        .map_err(|err| {
+            [
+                "Cannot read ",
+                pathstr.escape().as_str(),
+                ". ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })
         .or_die(1);
 
     // C analogy: "parse" into views
@@ -91,7 +99,12 @@ fn parse_and_cache_sections<'a>(
     if out_of_date {
         post.views.iter().enumerate().for_each(|(i, view)| {
             let (lang, toc_loc, doc_loc) = &to_html_metadata[i];
-            eprintln!("compiling {} {:?} and {:?}", lang, toc_loc, doc_loc);
+            eprintln!(
+                "compiling {} {} and {}",
+                lang,
+                toc_loc.escape(),
+                doc_loc.escape()
+            );
             create_parent_dir(toc_loc).or_die(1);
             create_parent_dir(doc_loc).or_die(1);
             api.compile(view.body.as_slice(), toc_loc, doc_loc)
@@ -161,7 +174,7 @@ fn link_view_sections(
     output_locs.iter().enumerate().for_each(|(i, data)| {
         let (lang, _, _) = &sections_metadata[i];
         let target = [config.public_dir, "/", data.output_loc.as_str()].join("");
-        eprintln!("linking {} {:?}", lang, target);
+        eprintln!("linking {} {}", lang, target.escape());
         create_parent_dir(target.as_str()).or_die(1);
         let linker_stdout =
             link_view(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
@@ -216,18 +229,20 @@ fn link_view(
 /******************************************************************************
  * Helper functions
  ******************************************************************************/
-fn to_datetime(time_result: io::Result<SystemTime>, msg: String) -> Result<DateTime<Utc>, String> {
-    let system_time = time_result
-        .map_err(|err| format!("{} is not supported on this filesystem. {}", msg, err))?;
+fn to_datetime(
+    time_result: io::Result<SystemTime>,
+) -> Result<DateTime<Utc>, (&'static str, String)> {
+    let system_time =
+        time_result.map_err(|err| (" is not supported on this filesystem. ", err.to_string()))?;
     let time = system_time
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|err| format!("{} is before UNIX epoch. {}", msg, err))?;
+        .map_err(|err| (" is before UNIX epoch. ", err.to_string()))?;
     let secs = time.as_nanos() / 1_000_000_000;
     let nano = time.as_nanos() % 1_000_000_000;
     if secs > i64::MAX as u128 {
-        return Err(format!(
-            "{} is too big and is not supported by the 'chrono' crate",
-            msg
+        return Err((
+            " is too big and is not supported by the 'chrono' crate",
+            "".to_string(),
         ));
     }
     Ok(Utc.timestamp(secs as i64, nano as u32))
@@ -245,36 +260,73 @@ impl<'a> PathWrapper<'a> {
     fn wrap(pathstr: &'a str) -> Result<Self, String> {
         let path = Path::new(pathstr);
         let stem_os = path.file_stem().ok_or_else(|| {
-            format!(
-                "The post path {:?} does not is not a path to a file",
-                pathstr
-            )
+            [
+                "The post path ",
+                pathstr.escape().as_str(),
+                " does not is not a path to a file",
+            ]
+            .join("")
         })?;
-        let ext_os = path
-            .extension()
-            .ok_or_else(|| format!("The post {:?} does not have a file extension", pathstr))?;
+        let ext_os = path.extension().ok_or_else(|| {
+            [
+                "The post ",
+                pathstr.escape().as_str(),
+                " does not have a file extension",
+            ]
+            .join("")
+        })?;
 
-        let stem = stem_os
-            .to_str()
-            .ok_or_else(|| format!("The stem {:?} in {:?} has invalid UTF8", stem_os, pathstr))?;
+        let stem = stem_os.to_str().ok_or_else(|| {
+            [
+                "The stem ",
+                stem_os.to_string_lossy().escape().as_str(),
+                " in ",
+                pathstr.escape().as_str(),
+                " contains invalid UTF8",
+            ]
+            .join("")
+        })?;
         let extension = ext_os.to_str().ok_or_else(|| {
-            format!(
-                "The extension {:?} in {:?} has invalid UTF8",
-                ext_os, pathstr
-            )
+            [
+                "The extension",
+                ext_os.to_string_lossy().escape().as_str(),
+                " in ",
+                pathstr.escape().as_str(),
+                " contains invalid UTF8",
+            ]
+            .join("")
         })?;
 
-        let metadata = path
-            .metadata()
-            .map_err(|err| format!("Cannot read metadata of {:?}. {}", pathstr, err))?;
-        let updated = to_datetime(
-            metadata.modified(),
-            format!("The file created date of {:?}", pathstr),
-        )?;
-        let created = to_datetime(
-            metadata.created(),
-            format!("The file last updated date metadata of {:?}", pathstr),
-        )?;
+        let meta = path.metadata().map_err(|err| {
+            [
+                "Cannot read metadata of ",
+                pathstr.escape().as_str(),
+                ". ",
+                pathstr,
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })?;
+        let updated = to_datetime(meta.modified()).map_err(|(my_err, sys_err)| {
+            [
+                "The file created date of ",
+                pathstr.escape().as_str(),
+                my_err,
+                ". ",
+                sys_err.as_str(),
+            ]
+            .join("")
+        })?;
+        let created = to_datetime(meta.created()).map_err(|(my_err, sys_err)| {
+            [
+                "The file last updated date metadata of ",
+                pathstr.escape().as_str(),
+                my_err,
+                ". ",
+                sys_err.as_str(),
+            ]
+            .join("")
+        })?;
 
         Ok(Self {
             pathstr,

@@ -1,6 +1,6 @@
 use std::fmt::Display;
-use std::process::exit;
 use std::ops::Range;
+use std::process::exit;
 
 pub trait VecExt<T> {
     fn push_and_check(&mut self, to_push: T);
@@ -46,6 +46,30 @@ impl BoolExt for bool {
     //    }
     //}
 }
+
+pub trait ShellEscape: AsRef<str> {
+    fn escape(&self) -> String {
+        let substr = self.as_ref();
+        let escapees = substr.chars().filter(|c| *c == '\'').count();
+        let capacity = substr.len()
+            + escapees * "'\\''".len() // times four per single-quote in substr
+            + '\''.len_utf8() * 2     // leading and trailing single quotes
+        ;
+        let mut output = String::with_capacity(capacity);
+        output.push('\'');
+        for c in substr.chars() {
+            if c == '\'' {
+                output.push_str("'\\''");
+            } else {
+                output.push(c);
+            }
+        }
+        output.push('\'');
+        output
+    }
+}
+impl ShellEscape for str {}
+impl ShellEscape for String {}
 
 pub trait ResultExt<T, E: Display> {
     fn or_die(self, exit_code: i32) -> T;

@@ -2,9 +2,9 @@
 // 'tags' has a special format
 // NOTE: 'filename', 'lang' are reserved
 use crate::custom_errors::ParseError;
-use crate::traits::{RangeExt, VecExt};
 use crate::helpers::parse_tags_and_push;
-use chrono::{Utc, DateTime, Datelike};
+use crate::traits::{RangeExt, ShellEscape, VecExt};
+use chrono::{DateTime, Datelike, Utc};
 use std::borrow::Cow;
 
 #[derive(Debug)]
@@ -37,7 +37,11 @@ pub struct Frontmatter<'a> {
 //run: ../build.sh
 // @TODO: Maybe change use a proper JSON parser?
 impl<'a> Frontmatter<'a> {
-    pub fn new(frontmatter: &'a str, created: DateTime<Utc>, modified: DateTime<Utc>) -> Result<Self, ParseError> {
+    pub fn new(
+        frontmatter: &'a str,
+        created: DateTime<Utc>,
+        modified: DateTime<Utc>,
+    ) -> Result<Self, ParseError> {
         // + 2 for guarenteed 'date-created' and 'date-updated'
         let keyval_count = validate_and_count(frontmatter)? + 2;
         let mut key_list = Vec::with_capacity(keyval_count);
@@ -75,6 +79,9 @@ impl<'a> Frontmatter<'a> {
                         Cow::Owned(
                             [
                                 "Dates must conform to RFC 2822 dates (internet format).\n",
+                                "You may wish to use `",
+                                super::NAME,
+                                "now-rfc2822`\n",
                                 err.to_string().as_str(),
                             ]
                             .join(""),
@@ -115,19 +122,14 @@ impl<'a> Frontmatter<'a> {
     #[inline]
     fn pad_two<'b>(num: u32) -> Cow<'b, str> {
         let mut padded = String::with_capacity('0'.len_utf8() * 2);
-        let tens =  num / 10;
+        let tens = num / 10;
         let ones = num % 10;
         padded.push(std::char::from_digit(tens, 10).unwrap());
         padded.push(std::char::from_digit(ones, 10).unwrap());
         Cow::Owned(padded)
     }
 
-    pub fn format(
-        &self,
-        template: &str,
-        file_stem: &str,
-        lang: &str,
-    ) -> String {
+    pub fn format(&self, template: &str, file_stem: &str, lang: &str) -> String {
         let range = 0..template.len();
         let count = range.split_over(template, Self::find_markup).count();
         let mut output = Vec::with_capacity(count * 2);
@@ -136,7 +138,8 @@ impl<'a> Frontmatter<'a> {
             let key = x.1.of(template);
             let key = if key.is_empty() {
                 key
-            } else { // remove the surrounding curly brackets
+            } else {
+                // remove the surrounding curly brackets
                 &key['{'.len_utf8()..key.len() - '}'.len_utf8()]
             };
 
@@ -152,16 +155,14 @@ impl<'a> Frontmatter<'a> {
                         _ => unreachable!(),
                     },
                     None => todo!("Will add defaults to be taken in from file"),
-                }
+                },
                 "lang" => Cow::Borrowed(lang),
                 "file_stem" => Cow::Borrowed(file_stem),
-                _ => {
-                    match self.lookup(key) {
-                        Some(Value::Utf8(x)) => Cow::Borrowed(*x),
-                        Some(Value::DateTime(_)) => todo!(),
-                        None => Cow::Borrowed(""),
-                    }
-                }
+                _ => match self.lookup(key) {
+                    Some(Value::Utf8(x)) => Cow::Borrowed(*x),
+                    Some(Value::DateTime(_)) => todo!(),
+                    None => Cow::Borrowed(""),
+                },
             };
             output.push_and_check(Cow::Borrowed(text));
             output.push_and_check(value);
@@ -175,10 +176,13 @@ impl<'a> Frontmatter<'a> {
     //       will be useful custom_error for more robustness
     //       as we can terminate more eplicitly (maybe), also more idomatic
     pub fn find_markup(buffer: &str) -> std::ops::Range<usize> {
-        buffer.find('{').and_then(|i| {
-            let rest = &buffer[i..buffer.len()];
-            rest.find('}').map(|end| (i..i + end + '}'.len_utf8()))
-        }).unwrap_or(buffer.len()..buffer.len())
+        buffer
+            .find('{')
+            .and_then(|i| {
+                let rest = &buffer[i..buffer.len()];
+                rest.find('}').map(|end| (i..i + end + '}'.len_utf8()))
+            })
+            .unwrap_or(buffer.len()..buffer.len())
     }
 
     //Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
@@ -306,7 +310,12 @@ fn error_invalid<'a>(
     key: &'a str,
     msg: &'a str,
 ) -> Result<(), ParseError<'a>> {
-    Err((row, line, Cow::Owned(format!("Key {:?} {}", key, msg))).into())
+    Err((
+        row,
+        line,
+        Cow::Owned(["Key ", key.escape().as_str(), " ", msg].join("")),
+    )
+        .into())
 }
 //fn invalid_tags(
 //    tags: &'a str,
