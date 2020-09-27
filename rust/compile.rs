@@ -2,14 +2,15 @@
 use chrono::{DateTime, TimeZone, Utc};
 use std::{fs, io, path::Path, time::SystemTime};
 
+use super::compare_mtimes;
 use super::RequiredConfigs;
 use crate::fileapi::{command_run, FileApi};
-use crate::frontmatter::Frontmatter;
+use crate::frontmatter::{Value, Frontmatter};
 use crate::helpers::create_parent_dir;
 use crate::post::Post;
 use crate::traits::{ResultExt, ShellEscape, VecExt};
 
-//run: ../build.sh build-rust clean compile-blog
+//run: ../build.sh build-rust compile-blog
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
@@ -34,10 +35,12 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
     let (api, path, post) = parse_text_to_post(config, pathstr, text.as_str());
 
     // Parse some metadata
-    let (out_of_date, view_sections_metadata) = parse_view_sections_metadata(config, &path, &post);
+    let (out_of_date, view_sections_metadata) =
+        parse_view_sections_metadata(config, &path, &post);
     let lang_list = post.lang_list.join(" ");
     // Must verify frontmatter before 'htmlifying_view_sections()'
-    let (views_metadata, output_targets) = parse_view_metadata(
+    // This prints the 
+    let (views_metadata, output_targets, tags_cache) = parse_view_metadata(
         &api,
         &path,
         lang_list.as_str(),
@@ -60,8 +63,22 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
             linker_loc,
         );
     } else {
-        eprintln!("Skipping finished {} (use --force to not skip)", pathstr.escape());
+        eprintln!(
+            "Skipping finished {} (use --force to not skip)",
+            pathstr.escape()
+        );
     }
+
+    let mut output = Vec::with_capacity(output_targets.len() + 1);
+    output.push_and_check(output_targets.len().to_string());
+    output.extend(output_targets.iter().map(|x| {
+        let target_path = x.1.find(':')
+            .map(|i| x.1.split_at(i + ':'.len_utf8()).1)
+            .unwrap_or("");
+        [path.stem, x.0, target_path, x.2.as_str()].join(",")
+    }));
+    println!("{}", output.join("\n"));
+    println!("{}", tags_cache.join("\n"));
 }
 
 /******************************************************************************/
@@ -87,7 +104,6 @@ fn parse_text_to_post<'a, 'b>(
 // run the parser/compiler associated with the filetype of the source
 type Section<'a> = (&'a str, String, String);
 
-use super::compare_mtimes;
 #[inline]
 fn parse_view_sections_metadata<'a>(
     config: &RequiredConfigs,
@@ -99,9 +115,24 @@ fn parse_view_sections_metadata<'a>(
 
     to_html_metadata.extend(post.views.iter().map(|view| {
         let lang = view.lang.unwrap_or("");
-        let toc_loc = [config.cache_dir, "/toc/", lang, "/", post_path.stem, ".html"].join("");
-        let doc_loc = [config.cache_dir, "/doc/", lang, "/", post_path.stem, ".html"].join("");
-
+        let toc_loc = [
+            config.cache_dir,
+            "/toc/",
+            lang,
+            "/",
+            post_path.stem,
+            ".html",
+        ]
+        .join("");
+        let doc_loc = [
+            config.cache_dir,
+            "/doc/",
+            lang,
+            "/",
+            post_path.stem,
+            ".html",
+        ]
+        .join("");
 
         out_of_date |= compare_mtimes(post_path.pathstr, toc_loc.as_str())
             || compare_mtimes(post_path.pathstr, doc_loc.as_str());
@@ -148,13 +179,14 @@ fn parse_view_metadata<'a, 'b>(
     sections_metadata: &'b [Section<'a>],
     post: &Post<'a>,
     path_format: &str,
-) -> (Vec<ViewMetadata<'a, 'b>>, Vec<(&'a str, String)>) {
+) -> (Vec<ViewMetadata<'a, 'b>>, Vec<(&'a str, String, String)>, Vec<String>) {
     // Pre-generate the metadata for the linker
     // In particular, 'link' for all views is used by every other view
     let len = post.views.len();
 
     let mut link_list = Vec::with_capacity(len);
     let mut views_metadata = Vec::with_capacity(len);
+    let mut tags_cache = Vec::with_capacity(len);
     views_metadata.extend(post.views.iter().enumerate().map(|(i, view)| {
         let source = api.frontmatter(view.body.as_slice()).or_die(1);
         let frontmatter = Frontmatter::new(source.as_str(), post_path.created, post_path.updated)
@@ -169,8 +201,15 @@ fn parse_view_metadata<'a, 'b>(
         let serialised = frontmatter.serialise();
         let tags_loc = frontmatter.format(path_format, "tags", lang);
         let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
+        let title = match frontmatter.lookup("title") {
+            Some(Value::Utf8(s)) => s.to_string(),
+            _ => "".to_string(),
+        };
 
-        link_list.push((*lang, link));
+        tags_cache.push_and_check(
+            frontmatter.format_to_tag_cache(post_path.stem, lang)
+        );
+        link_list.push_and_check((*lang, link, title));
         ViewMetadata {
             lang,
             other_langs: exclude(lang_list, lang),
@@ -181,14 +220,14 @@ fn parse_view_metadata<'a, 'b>(
             frontmatter_serialised: serialised,
         }
     }));
-    (views_metadata, link_list)
+    (views_metadata, link_list, tags_cache)
 }
 
 fn combine_sections_into_views(
     config: &RequiredConfigs,
     sections_metadata: &[Section],
     views_metadata: &[ViewMetadata],
-    link_list: &[(&str, String)],
+    link_list: &[(&str, String, String)],
     linker_loc: &str,
 ) {
     // Linker step (put the ToC, doc, and disparate parts together)
@@ -202,11 +241,6 @@ fn combine_sections_into_views(
         if !linker_stdout.is_empty() {
             eprintln!("{}", linker_stdout);
         }
-
-        //println!("{}", view.body.join(""));
-        //println!("{}", frontmatter_string);
-        //println!("{}", frontmatter.serialise());
-        //println!("{}", api.frontmatter(&view.body).unwrap());
     });
 }
 
@@ -217,7 +251,7 @@ fn link_view_sections(
     linker_command: &str,
     config: &RequiredConfigs,
     local_output_loc: &str,
-    link_list: &[(&str, String)],
+    link_list: &[(&str, String, String)],
     data: &ViewMetadata,
 ) -> Result<String, String> {
     let relative_output_loc = data.output_loc.as_str();
@@ -240,8 +274,8 @@ fn link_view_sections(
     api_keyvals.extend(
         link_list
             .iter()
-            .filter(|(l, _)| *l != data.lang)
-            .map(|(_, other_view_link)| other_view_link.as_str()),
+            .filter(|(l, _, _)| *l != data.lang)
+            .map(|(_, other_view_link, _)| other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
     command_run(Path::new(linker_command), None, &api_keyvals)

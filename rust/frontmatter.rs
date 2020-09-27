@@ -34,7 +34,6 @@ pub struct Frontmatter<'a> {
     tags: Vec<&'a str>,
 }
 
-//run: ../build.sh
 // @TODO: Maybe change use a proper JSON parser?
 impl<'a> Frontmatter<'a> {
     pub fn new(
@@ -188,52 +187,33 @@ impl<'a> Frontmatter<'a> {
     //Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
     //Junk,2019-11-01,stuff,jp,これはこれはどういう意味なんだろう
     //Linguistics,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
-    //Linguistics,yo,happy-times,zh,辣妹
+    //Linguistics,2019-11-01,happy-times,zh,辣妹
     //Sinitic,2020-03-15,chinese_tones,en,Rusheng
 
-    // Though we have lang, this is faster
-    //pub fn format_to_tag_cache(&self, file_stem: &str, lang: &str) -> String {
-    //    // @TODO: elevate to only generate once (store in frontmatter?)
-    //    // probably do not want to randomly benchmark in the user-facing code
-    //    let utc = chrono::offset::FixedOffset::east(0);
-    //    let date = match self.lookup("date-created") {
-    //        Some(Value::DateTime(dt)) => dt.with_timezone(&utc),
-    //        _ => Utc::now().with_timezone(&utc),
-    //    }
-    //    .format("%Y-%m-%d %H:%M:%S%.3f")
-    //    .to_string();
-    //    let date = date.as_str();
+    // The order of this out is designed to make the view tags easier
+    // Desired order is to sort by tags, then by date, then by name
+    // The language acts as a filter, the title is displayed
+    pub fn format_to_tag_cache(&self, file_stem: &str, lang: &str) -> String {
+        // @TODO: elevate to only generate once (store in frontmatter?)
+        // probably do not want to randomly benchmark in the user-facing code
+        let date = match self.lookup("date-created") {
+            Some(Value::DateTime(dt)) => dt,
+            _ => unreachable!("'date-created' must exist and be a datetime"),
+        }
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+        let title = match self.lookup("title") {
+            Some(Value::Utf8(s)) => s,
+            Some(Value::DateTime(_)) => unreachable!("'title' is always UTF8"),
+            None => "",
+        };
 
-    //    self.lookup("tags")
-    //        .map(|val| match val {
-    //            Value::Utf8(s) => s,
-    //            _ => unreachable!(),
-    //        })
-    //        .unwrap_or("")
-    //        .split_whitespace()
-    //        .map(|tag| {
-    //            let title = match self.lookup("title") {
-    //                Some(Value::Utf8(s)) => s,
-    //                Some(Value::DateTime(_)) => unreachable!(),
-    //                None => "",
-    //            };
-    //            //format!("{},{},{},{},{}\n", tag, date, lang, file_stem, title)
-    //            [
-    //                tag,
-    //                ",",
-    //                date,
-    //                ",",
-    //                lang,
-    //                ",",
-    //                file_stem,
-    //                ",",
-    //                title,
-    //                "\n",
-    //            ].join("")
-    //        })
-    //        .collect::<Vec<String>>()
-    //        .join("")
-    //}
+        let mut tag_line_list = Vec::with_capacity(self.tags.len());
+        tag_line_list.extend(self.tags.iter().map(|tag| {
+            [*tag, date.as_str(), file_stem, lang, title].join(",")
+        }));
+        tag_line_list.join("\n")
+    }
 
     // Serialising 'api_entries' here as well simply for code consolidation
     pub fn serialise(&self) -> String {
@@ -279,6 +259,7 @@ impl<'a> Frontmatter<'a> {
         meta_keyvals.join("")
     }
 }
+
 
 // @MARKUP_RULE
 fn validate_and_count(frontmatter: &str) -> Result<usize, ParseError> {
@@ -339,27 +320,27 @@ fn error_invalid<'a>(
 //}
 
 // run: cargo test frontmatter::frontmatter_test -- --nocapture
-//#[cfg(test)]
-//mod frontmatter_test {
-//    use super::*;
-//    use crate::fileapi::Interface;
-//    use crate::post::Post;
-//    use std::ffi::OsStr;
-//    use std::path::Path;
-//
-//    #[test]
-//    fn test() {
-//        let config = "config/make";
-//        let input = Path::new(".blog/published");
-//        let interface_cache = Interface::auto_load_apis(config, input);
-//        let api = interface_cache.get_api(OsStr::new("adoc")).unwrap();
-//
-//        let file = std::fs::read_to_string("test/chinese_tones.adoc").unwrap();
-//        let post = Post::new_multi_lang(&api, file).unwrap();
-//        post.views.iter().for_each(|view| {
-//            let frontmatter = Frontmatter::new(&api, &view.as_string(&post.original), true, false);
-//            println!("{:?}", frontmatter);
-//        });
-//        //println!("{:?}", post);
-//    }
-//}
+#[cfg(test)]
+mod frontmatter_test {
+    use super::*;
+    use crate::fileapi::FileApi;
+    use crate::post::Post;
+    use chrono::Utc;
+
+    #[test]
+    fn test() {
+        let api = FileApi::from_filename("config/api", "adoc").unwrap();
+        let pathstr = "config/published/chinese_tones.adoc";
+
+        let file = std::fs::read_to_string(pathstr).unwrap();
+        let post = Post::new(&file, "//").unwrap();
+        post.views.iter().for_each(|view| {
+            let now = Utc::now();
+            let lang = view.lang.unwrap_or("");
+            let fms = api.frontmatter(&view.body).unwrap();
+            let frontmatter = Frontmatter::new(&fms, now, now).unwrap();
+            println!("{:?}", frontmatter.format_to_tag_cache("chinese_tones", lang));
+        });
+        //println!("{:?}", post);
+    }
+}

@@ -1,0 +1,169 @@
+$LARGE-SCREEN: 768px;
+
+$link-base-color: blue;
+$link-hover-color: orange;
+
+/*******************************************************************************
+ * Grid Structure */
+.structure-blog {
+  @media screen and (min-width: $LARGE-SCREEN) {
+    display: grid;
+    grid-template-areas:
+      "header     header     header"
+      "left       main       right"
+      "footer     footer     footer";
+    grid-template-columns: minmax(0, 1fr) 600px minmax(0, 1fr);
+  }
+}
+
+.structure {
+}
+
+
+header { grid-area: header; }
+.left  { grid-area: left;   }
+.right { grid-area: right;  }
+main   { grid-area: main;   }
+footer { grid-area: footer; }
+/* */
+
+/*
+header { grid-area: header; background-color: #00ff00; }
+.left  { grid-area: left;   background-color: #f08005; }
+.right { grid-area: right;  background-color: #05f5f5; }
+main   { grid-area: main;   background-color: #fccccc; }
+footer { grid-area: footer; background-color: #aa00cc; }
+/* */
+
+
+.structure-blog {
+  > .right {
+    margin-top: 30px;
+    margin-left: 30px;
+    border-left: 1px solid #efefef;
+    padding-left: 20px;
+
+    position: sticky;
+    overflow-y: auto;
+    align-self: start;
+    max-height: 100vh;
+    //max-width: 300px;
+    top: 0;
+  }
+
+}
+
+/*******************************************************************************
+ * Functional Elements */
+@mixin indicate-clickable {
+  color: $link-base-color;
+  &:hover {
+    color: $link-hover-color;
+    cursor: pointer;
+  }
+}
+
+@mixin spoiler($default) {
+  $on:null; $off:null;  // for scope
+  @if $default == "default hide" {
+    $on: initial;
+    $off: none;
+  } @else {
+    $on: none;
+    $off: initial;
+  }
+
+  // '.toggle' should be the first item in list
+  // so no need for '+ * .display'... cases
+  > .toggle:not(:checked) {
+    ~ .display-on-hide, ~ * .display-on-hide
+      { display: $off; }  // Deactivated show
+    ~ .display-on-show, ~ * .display-on-show
+      { display: $on; }   // Deactivated hide
+  }
+  > .toggle:checked {
+    ~ .display-on-hide, ~ * .display-on-hide
+      { display: $on; }   // Activated show
+    ~ .display-on-show, ~ * .display-on-show
+      { display: $off; }  // Activated hide
+  }
+
+  > .toggle { display: none; }
+}
+
+
+// Show on anchor
+.tag-list {
+  :target ~ .entry {
+    background-color: red;
+  }
+}
+
+.indicate-clickable {
+  @include indicate-clickable;
+}
+
+
+/*******************************************************************************
+ * Customisation */
+html, body, div { margin: 0px; padding: 0px; }
+main, .left, .right {
+  line-height: 1.6em;  // See blog entry on design
+  padding: 10px;
+}
+
+
+// Tags
+.left .active {
+  background-color: gold;
+}
+
+// Links
+nav a {
+  text-decoration: none;
+}
+
+.left {
+  min-width: 0;
+}
+
+// Title
+header {
+  width: 100%;
+  border-bottom: 1px solid gray;
+  background-color: white;
+  nav > span {
+    display: inline-block;
+    padding: 10px 40px;
+    text-align: center;
+    vertical-align: center;
+
+    :hover { color: $link-hover-color; }
+  }
+}
+
+button {
+  padding: 10px 20px;
+  border-radius: 5px;
+  text-decoration: none;
+}
+
+.sitelogo {
+  padding-right: 50px;
+}
+
+header div {
+  text-align: center;
+  font-size: 3em;
+  padding: 10px 1em;
+}
+
+.spoiler {
+  &.default-show { @include spoiler("default show"); }
+  &.default-hide { @include spoiler("default hide"); }
+  @media screen and (min-width: $LARGE-SCREEN) {
+    &.large-screen-default-show { @include spoiler("default show"); }
+    &.large-screen-default-hide { @include spoiler("default hide"); }
+  }
+}
+

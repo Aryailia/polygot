@@ -2,24 +2,6 @@
 
 NAME="$( basename "${0}"; printf a )"; NAME="${NAME%?a}"
 
-
-show_help() {
-  <<EOF cat - >&2
-SYNOPSIS
-  ${NAME}
-
-DESCRIPTION
-  
-
-OPTIONS
-  -
-    Special argument that says read from STDIN
-
-  --
-    Special argument that prevents all following arguments from being
-    intepreted as options.
-EOF
-}
 show_help() {
   <<EOF cat - >&2
 SYNOPSIS
@@ -71,9 +53,12 @@ main() {
   TEMPLATES="${CONFIG}/website-templates"
 
   DOMAIN="${PROJECT_HOME}/${PUBLIC}"
+  TAGS_CACHE="${CACHE}/tags.csv"
+  LINK_CACHE="${CACHE}/link.csv"
 
   # Flags
   FORCE='false'
+  API="./$( sed -n '1,/\[\[bin\]\]/d;s/"$//;s/^name = "//p' "Cargo.toml" )"
 
   # Options processing
   args=''
@@ -82,17 +67,16 @@ main() {
     ;; -f|--force) FORCE='true'
 
     ;; -*) die FATAL 1 "Invalid option '${a}'. See \`${NAME} -h\` for help"
+    ;; build-rust) build_rust
     ;; *)  args="${args} ${a}"
   esac; done
 
   [ -z "${args}" ] && { show_help; exit 1; }
   eval "set -- ${args}"
 
-  API="./$( sed -n '1,/\[\[bin\]\]/d;s/"$//;s/^name = "//p' "Cargo.toml" )"
   [ ! -x "${API}" ] && die FATAL 1 "'${API}' was not found (blog api)." \
     "Run \`${NAME} build-rust\` (though one should be provided)"
 
-  #run: sh % build-rust build
   for subcommand in "$@"; do case "${subcommand}"
     in clean-cache)
       outln "Removing contents of '${CACHE}/'..."
@@ -115,7 +99,7 @@ main() {
       do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
 
 
-    ;; build-rust)    build_rust
+    #;; build-rust)     build_rust
     ;; build)
       errln "Building the website and the blog"
       mkdir -p "${PUBLIC}"
@@ -123,15 +107,37 @@ main() {
       compile_blog
 
     ;; test)
-      errln "for testing"
-      build_rust
-      compile_post "${PUBLISHED}/blue.adoc"
+      #errln "for testing"
+      #build_rust
+      #compile_post "${PUBLISHED}/blue.adoc"
+      <"${TAGS_CACHE}" sieve_out_name "chinese_tones"
 
     ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
   esac; done
 }
+blah() {
+  <<EOF cat - >"${TAGS_CACHE}"
+Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
+Junk,2019-11-01,stuff,jp,これはこれはどういう意味なんだろう
+Linguistics,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
+Linguistics,yo,happy-times,zh,辣妹
+EOF
+}
+
+#sieve_out_name() {
+#  # $1: the filename to remove (no extension)
+#  while IFS=',' read -r _tag _time _name _lang _title; do
+#    if [ -n "${_tag}" ] && [ "${_name}" != "${1}" ]; then
+#      outln "${_tag},${_time},${_name},${_lang},${_title}"
+#    fi
+#  done
+#  if  [ -n "${_tag}" ] && [ "${_name}" != "${1}" ]; then
+#    outln "${_tag},${_time},${_name},${_lang},${_title}"
+#  fi
+#}
 
 build_rust() {
+  # must not use FORCE, or we have to redo main
   require 'cargo' || die FATAL 1 "Could not find the executable '${API}'" \
     "And without cargo/rust installed, you cannot compile."
   cargo build --release
@@ -139,18 +145,66 @@ build_rust() {
 }
 
 compile_blog() {
+  if "${FORCE}" || [ ! -e "${BLOG_OUTPUT}" ]
+    then full_rebulid='true'
+    else full_rebuild='false'
+  fi
   mkdir -p "${CACHE}" "${BLOG_OUTPUT}"
-  for f in "${PUBLISHED}"/*; do
-    compile_post "${f}" || exit "$?"
+
+  tags_cache=''
+  link_cache=''
+  compile_error='0'
+  for file in "${PUBLISHED}"/*; do
+    name="${file##*/}"
+    extn="${name##*.}"
+    name="${file%."${extn}"}"
+
+    output="$( compile_post "${file}" 2>/dev/null )" || { compile_error="$?"; break; }
+    if [ "${compile_error}" = 0 ]; then
+      num="${output%%${NL}*}"
+      output="${output#"${num}${NL}"}"
+      while [ "${num}" -gt 0 ]; do
+        line="${output%%${NL}*}"
+        output="${output#*${NL}}"
+        link_cache="${link_cache}${line}${NL}"
+        num="$(( num - 1 ))"
+      done
+      tags_cache="${tags_cache}${output}"
+    fi
   done
+
+  if [ "${compile_error}" = 0 ]; then
+    errln "Updating link cache '${LINK_CACHE}'"
+    outln "${link_cache}" | sort | sed '/^$/d' >"${LINK_CACHE}"
+    errln "Updating tags cache '${TAGS_CACHE}'"
+    outln "${tags_cache}" | sort | sed '/^$/d' >"${TAGS_CACHE}"
+
+    tags_output="${BLOG_OUTPUT}/tags.html"
+    errln "Making tags index page '${tags_output}'"
+
+    "${TEMPLATES}/tags.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
+      | "${CONFIG}/combine.sh" \
+        "domain=v:${DOMAIN}" \
+        "navbar=v:$( "${TEMPLATES}/navbar.sh" "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" )" \
+      >"${BLOG_OUTPUT}/tags.html"
+  else
+    exit "${compile_error}"
+  fi
+
 }
+
+#backup_tags() {
+#  if [ -f "${TAGS_CACHE}" ]; then
+#    mv TAGS_BACKUP
+#  sed
+#}
 
 compile_post() {
   # $1: path to the post to compile
   #cargo run compile-markup "${1}" "${TEMPLATES}/post.sh" \
   if "${FORCE}"
-    then force_option="--force"
-    else force_option=""
+    then _force_option="--force"
+    else _force_option=""
   fi
   "${API}" compile-markup "${1}" "${TEMPLATES}/post.sh" \
     "blog/{lang}/{year}-{month}-{day}-{file_stem}.html" \
@@ -159,68 +213,56 @@ compile_post() {
     --domain "${DOMAIN}" \
     --public-dir "${PUBLIC}" \
     --templates-dir "${TEMPLATES}" \
-    ${force_option} \
+    ${_force_option} \
   # end
 
 }
 
 
 
-finished() {
-  errln "Processed '\${SOURCE}/${1}' -> '\${PUBLIC}/${1%.*}.${2}'"
-}
-unchanged() {
-  errln "Not updated '${1}' <> '${2}'"
+#run: sh % build-rust build
+update() {
+  filename="${1##*/}"
+  parent="${1%"${filename}"}"  # has trailing '/' if not root
+  filename="${filename%."${2}"}"
+
+  from_rel="${1}"
+  from="${SOURCE}/${from_rel}"
+  into_rel="${parent}${filename}.${3}"
+  into="${PUBLIC}/${into_rel}"
+  mkdir -p "${PUBLIC}/${parent}"
+
+  shift 3 || exit "$?"
+  if "${FORCE}" || "${API}" is-first-newer-than "${from}" "${into}"; then
+    "$@" "${from}" "${into}" || exit "$?"
+    "${API}" sync-last-updated-of-first-to "${from}" "${into}"
+    errln "Processed '\${SOURCE}/${from_rel}' -> '\${PUBLIC}/${into_rel}'"
+  else
+    errln "Not updated '${from_rel}' <> '${into_rel}'"
+  fi
 }
 
-is_forced_or_outdated() {
-  "${FORCE}" || "${API}" is-first-newer-than "${1}" "${2}"
+compile_html() {
+  <"${1}" "${CONFIG}/combine.sh" \
+    "prefix=v:${DOMAIN}" \
+    "navbar=v:$( "${TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}" )" \
+  >"${2}" || exit "$?"
 }
 
 compile() {
   # $1: relative path to file to compile
   [ ! -f "${1}" ] || die FATAL 1 "Can only compile files, '${1}' is not a file"
-  ext="${1##*/}"; ext="${ext##*.}"
-  name="${1%."${ext}"}"
+  extension="${1##*/}"
+  extension="${extension##*.}"
 
-  from="${SOURCE}/${1}"
-  neww="${PUBLIC}/${name}"
-
-  case "${ext}"
-    in sass|scss) into="${neww}.css"
-      if is_forced_or_outdated "${from}" "${into}"; then
-        sassc "${from}" "${into}" || exit "$?"
-        "${API}" sync-last-updated-of-first-to "${from}" "${into}"
-        finished "${1}" 'css'
-      else
-        unchanged "${1}" "${name}.css"
-      fi
-
-    ;; html)      into="${neww}.html"
-      if is_forced_or_outdated "${from}" "${into}"; then
-        <"${from}" "${CONFIG}/combine.sh" \
-          "prefix=v:${DOMAIN}" \
-          "navbar=v:$( "${TEMPLATES}/navbar.sh" "${DOMAIN}" "${1}" )" \
-          "body=f:${f}" \
-        >"${into}" || exit "$?"
-        "${API}" sync-last-updated-of-first-to "${from}" "${into}"
-        finished "${1}" 'html'
-      else
-        unchanged "${1}" "${name}.html"
-      fi
-
-    ;; css|js)    into="${into}.${ext}"
-      if is_forced_or_outdated "${from}" "${into}"; then
-        cp "${from}" "${into}" || exit "$?"
-        "${API}" sync-last-updated-of-first-to "${from}" "${into}"
-        finished "${1}" "${ext}"
-      else
-        unchanged "${1}" "${ext}"
-      fi
+  case "${extension}"
+    in html)      update "${1}" "${extension}" html compile_html
+    ;; css|js)    update "${1}" "${extension}" html cp
+    ;; sass|scss) update "${1}" "${extension}" css  sassc
 
     ;; "${1}") die FATAL 1 "'${1}' has no file extension"
     ;; *)      die FATAL 1 \
-      "The extension '${_ext}' for '${1}' is unsupported. Add it?"
+      "The extension '${ext}' for '${1}' is unsupported. Add it?"
   esac
 }
 
