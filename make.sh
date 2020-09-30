@@ -67,13 +67,18 @@ main() {
     ;; -f|--force) FORCE='true'
 
     ;; -*) die FATAL 1 "Invalid option '${a}'. See \`${NAME} -h\` for help"
-    ;; build-rust) build_rust
     ;; *)  args="${args} ${a}"
   esac; done
 
   [ -z "${args}" ] && { show_help; exit 1; }
   eval "set -- ${args}"
 
+  # Run this first
+  for subcommand in "$@"; do case "${subcommand}"
+    in build-rust)    build_rust
+  esac; done
+
+  # Then check if it exists
   [ ! -x "${API}" ] && die FATAL 1 "'${API}' was not found (blog api)." \
     "Run \`${NAME} build-rust\` (though one should be provided)"
 
@@ -99,7 +104,7 @@ main() {
       do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
 
 
-    #;; build-rust)     build_rust
+    ;; build-rust)     # already handled
     ;; build)
       errln "Building the website and the blog"
       mkdir -p "${PUBLIC}"

@@ -1,11 +1,11 @@
 [package]
-name = "blog"
+name = "polygot-posts"
 version = "0.1.0"
 authors = ["Aryailia <Aryailia@users.noreply.github.com>"]
 edition = "2018"
 
 [[bin]]
-name = "post-compile"
+name = "polygot-posts"
 path = "rust/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
