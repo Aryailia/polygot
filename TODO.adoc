@@ -1,0 +1,9 @@
+- Add uncategorised tag
+- Figure out some way to warn about overwritting tags.html, possibly:
+  - Change directory structure
+  - Insert warnings or programmatically enforced rules on draft creation/renaming
+- Implement unit tests (with makefile?)
+- fix update_tag_hunk --remmove to only accept on post (or to accept several)
+- fix variable name nesting (having enough underscores to avoid name collision)
+- add guide for how to customise
+- figure out solution for die in api.sh
