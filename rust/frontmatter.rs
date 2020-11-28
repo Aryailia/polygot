@@ -104,6 +104,9 @@ impl<'a> Frontmatter<'a> {
         }
 
         tag_list.sort_unstable();
+        if tag_list.is_empty() {
+            tag_list.push("Untagged");
+        }
         debug_assert_eq!(key_list.len(), value_list.len());
         Ok(Self {
             keys: key_list,

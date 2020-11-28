@@ -10,7 +10,7 @@ use crate::helpers::create_parent_dir;
 use crate::post::Post;
 use crate::traits::{ResultExt, ShellEscape, VecExt};
 
-//run: DOMAIN='/' ../make.sh build-rust compile-blog
+//run: DOMAIN='' ../make.sh build-rust compile-blog
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
@@ -70,7 +70,9 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
     }
 
     let mut output = Vec::with_capacity(output_targets.len() + 1);
+    // Number of link-cache lines
     output.push_and_check(output_targets.len().to_string());
+    // The actual link-cache lines
     output.extend(output_targets.iter().map(|x| {
         let target_path = x.1.find(':')
             .map(|i| x.1.split_at(i + ':'.len_utf8()).1)
@@ -78,6 +80,7 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
         [path.stem, x.0, target_path, x.2.as_str()].join(",")
     }));
     println!("{}", output.join("\n"));
+    // Tag-cache lines
     println!("{}", tags_cache.join("\n"));
 }
 

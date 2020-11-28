@@ -37,14 +37,6 @@ NL='
 
 # NOTE: Make sure to not set ${b_args} here (used in blog.sh)
 main() {
-  [ -z "${DOMAIN}" ] && {
-    # This my solution to not having an .env folder to customise
-    # based on environment (e.g. local vs on server)
-    # This is what ${DOMAIN} is suppose to customise for
-    errln '${DOMAIN} unspecified' \
-      "Suggestion, instead use: \`DOMAIN='/' ${NAME} $@\`"
-    exit 1
-  }
   wd="$( dirname "${0}"; printf a )"; wd="${wd%${NL}a}"
   cd "${wd}" || exit "$?"
   PROJECT_HOME="$( pwd -P; printf a )"; PROJECT_HOME="${PROJECT_HOME%${NL}a}"
@@ -71,8 +63,8 @@ main() {
 
   # This is for links to have the proper value if you view them locally
   # TODO: add local web hosting to ${BLOG_API}
-  DOMAIN="${PROJECT_HOME}/${PUBLIC}"  # If local  (file:///...)
-  #DOMAIN="/"                          # If server (http://...)
+  #DOMAIN="${PROJECT_HOME}/${PUBLIC}"  # If local  (file:///...)
+  #DOMAIN=""                           # If server (http://...)
   FILES_TO_PROCESS_LIMIT=10000
   POST_OUTPUT="blog/{lang}/{year}-{month}-{day}-{file_stem}.html"
   ##############################################################################
@@ -144,7 +136,8 @@ main() {
       #errln "for testing"
       #build_rust
       #compile_post "${PUBLISHED}/blue.adoc"
-      <"${TAGS_CACHE}" sieve_out_name "chinese_tones"
+      #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
+      compile_blog
 
     ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
   esac; done
@@ -195,16 +188,22 @@ compile_blog() {
     name="${file%."${extn}"}"
 
     output="$( compile_post "${file}" )" || { compile_error="$?"; break; }
+    # The format is
+    # - number link-cache lines (this is the number of following entries)
+    # - link-cache line
+    # - second tag-cache line (if more than one lang)
     if [ "${compile_error}" = 0 ]; then
       num="${output%%${NL}*}"
       output="${output#"${num}${NL}"}"
+      
+      # Separate the link-cache lines from the tag-cache lines
       while [ "${num}" -gt 0 ]; do
         line="${output%%${NL}*}"
         output="${output#*${NL}}"
         link_cache="${link_cache}${line}${NL}"
         num="$(( num - 1 ))"
       done
-      tags_cache="${tags_cache}${output}"
+      tags_cache="${tags_cache}${output}${NL}"
     fi
   done
 
@@ -214,15 +213,23 @@ compile_blog() {
     errln "Updating tags cache '${TAGS_CACHE}'"
     outln "${tags_cache}" | sort | sed '/^$/d' >"${TAGS_CACHE}"
 
-    tags_output="${BLOG_OUTPUT}/tags.html"
-    errln "Making tags index page '${tags_output}'"
+    errln "Creating blog landing page '${BLOG_OUTPUT}/index.html'"
+    index_output="${BLOG_OUTPUT}/index.html"
+    "${SITE_TEMPLATES}/blog-index.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
+      | "${CONFIG}/combine.sh" \
+        "domain=v:${DOMAIN}" \
+        "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
+          "${DOMAIN}" "${index_output#"${PUBLIC}/"}" )" \
+      >"${index_output}" || exit "$?"
 
+    errln "Making tags index page '${tags_output}'"
+    tags_output="${BLOG_OUTPUT}/tags.html"
     "${SITE_TEMPLATES}/tags.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
       | "${CONFIG}/combine.sh" \
         "domain=v:${DOMAIN}" \
         "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
           "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" )" \
-      >"${BLOG_OUTPUT}/tags.html"
+      >"${tags_output}"
   else
     exit "${compile_error}"
   fi
@@ -256,7 +263,7 @@ compile_post() {
 
 
 
-#run: sh % build-rust build
+#run: sh % test
 update() {
   filename="${1##*/}"
   parent="${1%"${filename}"}"  # has trailing '/' if not root
@@ -287,8 +294,17 @@ compile_html() {
   >"${2}" || exit "$?"
 }
 
+compile_sh() {
+  sh "${1}" | "${CONFIG}/combine.sh" \
+    "prefix=v:${DOMAIN}" \
+    "navbar=v:$(
+      "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}"
+    )" \
+  #>"${2}" || exit "$?"
+}
+
 compile() {
-  # $1: relative path to file to compile
+  # $1: relative path to file to compile (so without ${PUBLIC})
   if [ -h "${SOURCE}/${1}" ]; then
     if "${FORCE}" || [ ! -e "${PUBLIC}/${1}" ]; then
       errln "Relinking '\${SOURCE}/${1}' -> '\${PUBLIC}/${1}'"
@@ -308,6 +324,7 @@ compile() {
       in html)      update "${1}" "${extension}" html compile_html
       ;; css|js)    update "${1}" "${extension}" html cp
       ;; sass|scss) update "${1}" "${extension}" css  sassc
+      ;; sh)        update "${1}" "${extension}" html compile_sh
 
       ;; "${1}") die FATAL 1 "'${1}' has no file extension"
       ;; *)      die FATAL 1 \
