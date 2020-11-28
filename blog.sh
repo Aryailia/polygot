@@ -20,16 +20,17 @@ NEWLINE='
 
 mydir="$( dirname "${0}"; printf a )"
 mydir="${mydir%${NEWLINE}a}"
-MAKE="${mydir}/make.sh"
+MAKE="./make.sh"  # inside of ${mydir}
 
 main() {
-  [ -e "${MAKE}" ] || die FATAL 1 \
-    "Could not find '${MAKE}' file for setting environment variables"
+  [ -e "${mydir}/${MAKE}" ] || die FATAL 1 \
+    "Could not find '${mydir}/${MAKE}' file for setting environment variables"
 
   b_args=""
   for a in "$@"; do b_args="${b_args} $( outln "${a}" | eval_escape )"; done
   set --  # clear arguments for source command
-  . "${mydir}/make.sh" 2>/dev/null
+  DOMAIN='this can anything' . "${mydir}/${MAKE}" 2>/dev/null
+  export DOMAIN  # required by ${MAKE}
   eval "set -- ${b_args}"
 
   case "$( prompt_tesT "${1}" "$( printf %s\\n \

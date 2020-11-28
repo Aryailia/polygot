@@ -37,22 +37,21 @@ NL='
 
 # NOTE: Make sure to not set ${b_args} here (used in blog.sh)
 main() {
+  [ -z "${DOMAIN}" ] && {
+    # This my solution to not having an .env folder to customise
+    # based on environment (e.g. local vs on server)
+    # This is what ${DOMAIN} is suppose to customise for
+    errln '${DOMAIN} unspecified' \
+      "Suggestion, instead use: \`DOMAIN='/' ${NAME} $@\`"
+    exit 1
+  }
   wd="$( dirname "${0}"; printf a )"; wd="${wd%${NL}a}"
   cd "${wd}" || exit "$?"
+  PROJECT_HOME="$( pwd -P; printf a )"; PROJECT_HOME="${PROJECT_HOME%${NL}a}"
 
   ##############################################################################
   # Customize these
   ###
-  # This is for links to have the proper value if you view them locally
-  # TODO: add local web hosting to ${BLOG_API}
-  DOMAIN="${PROJECT_HOME}/${PUBLIC}"  # If local  (file:///...)
-  #DOMAIN="/"                          # If server (http://...)
-  FILES_TO_PROCESS_LIMIT=10000
-  POST_OUTPUT="blog/{lang}/{year}-{month}-{day}-{file_stem}.html"
-
-  # For customising the content of your posts
-  export AUTHOR=""                           # Your name
-
   # Paths relative to ${PWD} (this is where this script is located)
   export CONFIG="config"  #
          SOURCE="source"  # Your website's HTML, CSS, etc. files
@@ -66,6 +65,16 @@ main() {
   export      PUBLISHED="${CONFIG}/published"          # Where drafts are moved
   export POST_TEMPLATES="${CONFIG}/post-templates"     #
   export SITE_TEMPLATES="${CONFIG}/website-templates"  #
+
+  # For customising the content of your posts
+  export AUTHOR=""                           # Your name
+
+  # This is for links to have the proper value if you view them locally
+  # TODO: add local web hosting to ${BLOG_API}
+  DOMAIN="${PROJECT_HOME}/${PUBLIC}"  # If local  (file:///...)
+  #DOMAIN="/"                          # If server (http://...)
+  FILES_TO_PROCESS_LIMIT=10000
+  POST_OUTPUT="blog/{lang}/{year}-{month}-{day}-{file_stem}.html"
   ##############################################################################
 
          TAGS_CACHE="${CACHE}/tags.csv"
@@ -123,7 +132,6 @@ main() {
       errln "Building just the website (without the blog)..."
       mkdir -p "${PUBLIC}"
       do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
-
 
     ;; build-rust)     # already handled
     ;; build)
@@ -266,7 +274,7 @@ update() {
     "${BLOG_API}" sync-last-updated-of-first-to "${from}" "${into}"
     errln "Processed '\${SOURCE}/${from_rel}' -> '\${PUBLIC}/${into_rel}'"
   else
-    errln "Not updated '${from_rel}' <> '${into_rel}'"
+    errln "Not updated '\${SOURCE}/${from_rel}' <> '\${PUBLIC}/${into_rel}'"
   fi
 }
 
@@ -281,19 +289,31 @@ compile_html() {
 
 compile() {
   # $1: relative path to file to compile
-  [ ! -f "${1}" ] || die FATAL 1 "Can only compile files, '${1}' is not a file"
-  extension="${1##*/}"
-  extension="${extension##*.}"
+  if [ -h "${SOURCE}/${1}" ]; then
+    if "${FORCE}" || [ ! -e "${PUBLIC}/${1}" ]; then
+      errln "Relinking '\${SOURCE}/${1}' -> '\${PUBLIC}/${1}'"
+      cp -P "${SOURCE}/${1}" "${PUBLIC}/${1}"
+    else
+      errln "Not updated '\${SOURCE}/${1}' <> '\${PUBLIC}/${1}'"
+    fi
 
-  case "${extension}"
-    in html)      update "${1}" "${extension}" html compile_html
-    ;; css|js)    update "${1}" "${extension}" html cp
-    ;; sass|scss) update "${1}" "${extension}" css  sassc
+  elif [ ! -f "${SOURCE}/${1}" ]; then
+    die FATAL 1 "Can only compile files, '${SOURCE}/${1}' is not a file"
 
-    ;; "${1}") die FATAL 1 "'${1}' has no file extension"
-    ;; *)      die FATAL 1 \
-      "The extension '${ext}' for '${1}' is unsupported. Add it?"
-  esac
+  else
+    extension="${1##*/}"
+    extension="${extension##*.}"
+
+    case "${extension}"
+      in html)      update "${1}" "${extension}" html compile_html
+      ;; css|js)    update "${1}" "${extension}" html cp
+      ;; sass|scss) update "${1}" "${extension}" css  sassc
+
+      ;; "${1}") die FATAL 1 "'${1}' has no file extension"
+      ;; *)      die FATAL 1 \
+        "The extension '${ext}' for '${1}' is unsupported. Add it?"
+    esac
+  fi
 }
 
 # Follows symlinks
@@ -325,7 +345,7 @@ do_for_each_file_in() {
           "Files processed in '${1}' > '${FILES_TO_PROCESS_LIMIT}'" \
           "Increase \${FILES_TO_PROCESS_LIMIT} inside of '${NAME}'"
 
-        if [ -d "${fe_node}" ]; then
+        if [ ! -h "${fe_node}" ] && [ -d "${fe_node}" ]; then
           fe_to_process="${fe_to_process}././${fe_node}"
           continue
         fi

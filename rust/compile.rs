@@ -10,7 +10,7 @@ use crate::helpers::create_parent_dir;
 use crate::post::Post;
 use crate::traits::{ResultExt, ShellEscape, VecExt};
 
-//run: ../build.sh build-rust compile-blog
+//run: DOMAIN='/' ../make.sh build-rust compile-blog
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
@@ -84,14 +84,14 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
 /******************************************************************************/
 // Parse the custom markup
 #[inline]
-fn parse_text_to_post<'a, 'b>(
-    config: &RequiredConfigs,
+fn parse_text_to_post<'a, 'b, 'c>(
+    config: &'c RequiredConfigs,
     pathstr: &'b str,
     text: &'a str,
-) -> (FileApi, PathWrapper<'b>, Post<'a>) {
+) -> (FileApi<'c>, PathWrapper<'b>, Post<'a>) {
     // @TODO check if constructor is needed
     let path = PathWrapper::wrap(pathstr).or_die(1);
-    let api = FileApi::from_filename(config.api_dir, path.extension).or_die(1);
+    let api = FileApi::from_filename(config.api_dir, path.extension, config.domain).or_die(1);
     let comment_marker = api.comment().or_die(1);
     let post = Post::new(text, comment_marker.as_str())
         .map_err(|err| err.with_filename(path.pathstr))
@@ -172,8 +172,8 @@ struct ViewMetadata<'a, 'b> {
 }
 
 #[inline]
-fn parse_view_metadata<'a, 'b>(
-    api: &FileApi,
+fn parse_view_metadata<'a, 'b, 'c>(
+    api: &'c FileApi,
     post_path: &PathWrapper,
     lang_list: &'b str,
     sections_metadata: &'b [Section<'a>],
@@ -278,7 +278,7 @@ fn link_view_sections(
             .map(|(_, other_view_link, _)| other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
-    command_run(Path::new(linker_command), None, &api_keyvals)
+    command_run(Path::new(linker_command), config.domain, None, &api_keyvals)
 }
 
 /******************************************************************************

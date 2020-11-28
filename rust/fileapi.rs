@@ -3,14 +3,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-pub struct FileApi(PathBuf);
+pub struct FileApi<'a> {
+    pathbuf: PathBuf,
+    domain: &'a str,
+}
 
 type Output = Result<String, String>;
-impl FileApi {
-    pub fn from_filename(api_dir: &str, extension: &str) -> Result<Self, String> {
+impl<'a> FileApi<'a> {
+    pub fn from_filename(api_dir: &str, extension: &str, domain: &'a str) -> Result<Self, String> {
         let command = Path::new(api_dir).join(Path::new(extension));
         if command.is_file() {
-            Ok(Self(command))
+            Ok(Self {
+                pathbuf: command,
+                domain,
+            })
         } else {
             Err([
                 "Cannot find API handler for ",
@@ -25,24 +31,26 @@ impl FileApi {
     // These three lines are the what each file extension API must implement
     #[inline]
     pub fn comment(&self) -> Output {
-        command_run(self.0.as_path(), None, &["comment"])
+        command_run(self.pathbuf.as_path(), self.domain, None, &["comment"])
     }
     #[inline]
     pub fn compile(&self, stdin: &[&str], toc_location: &str, body_location: &str) -> Output {
         command_run(
-            self.0.as_path(),
+            self.pathbuf.as_path(),
+            self.domain,
             Some(stdin),
             &["compile", toc_location, body_location],
         )
     }
     #[inline]
     pub fn frontmatter(&self, stdin: &[&str]) -> Output {
-        command_run(self.0.as_path(), Some(stdin), &["frontmatter"])
+        command_run(self.pathbuf.as_path(), self.domain, Some(stdin), &["frontmatter"])
     }
 }
 
-pub fn command_run(cmd_path: &Path, stdin: Option<&[&str]>, args: &[&str]) -> Output {
+pub fn command_run(cmd_path: &Path, domain: &str, stdin: Option<&[&str]>, args: &[&str]) -> Output {
     let mut child = Command::new(cmd_path)
+        .env("DOMAIN", domain)
         .args(args)
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -112,7 +120,8 @@ pub fn command_run(cmd_path: &Path, stdin: Option<&[&str]>, args: &[&str]) -> Ou
             match output.status.code() {
                 Some(code) => code.to_string(),
                 _ => "Interrupted".to_string(),
-            }.as_str(),
+            }
+            .as_str(),
             "\n=== STDOUT ===\n",
             String::from_utf8_lossy(&output.stdout).to_string().as_str(),
             "\n=== STDERR ===\n",
