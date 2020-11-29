@@ -94,7 +94,7 @@ fn parse_text_to_post<'a, 'b, 'c>(
 ) -> (FileApi<'c>, PathWrapper<'b>, Post<'a>) {
     // @TODO check if constructor is needed
     let path = PathWrapper::wrap(pathstr).or_die(1);
-    let api = FileApi::from_filename(config.api_dir, path.extension, config.domain).or_die(1);
+    let api = FileApi::from_filename(config.api_dir, path.extension, (config.domain, config.blog_relative)).or_die(1);
     let comment_marker = api.comment().or_die(1);
     let post = Post::new(text, comment_marker.as_str())
         .map_err(|err| err.with_filename(path.pathstr))
@@ -170,7 +170,7 @@ struct ViewMetadata<'a, 'b> {
     toc_loc: &'b str,
     doc_loc: &'b str,
     output_loc: String,
-    tags_loc: String,
+    //tags_loc: String,
     frontmatter_serialised: String,
 }
 
@@ -202,7 +202,7 @@ fn parse_view_metadata<'a, 'b, 'c>(
         let (lang, toc_loc, doc_loc) = &sections_metadata[i];
         let output_loc = frontmatter.format(path_format, post_path.stem, lang);
         let serialised = frontmatter.serialise();
-        let tags_loc = frontmatter.format(path_format, "tags", lang);
+        //let tags_loc = frontmatter.format(path_format, "tags", lang);
         let link = ["relative_", lang, "_view:", output_loc.as_str()].join("");
         let title = match frontmatter.lookup("title") {
             Some(Value::Utf8(s)) => s.to_string(),
@@ -219,7 +219,7 @@ fn parse_view_metadata<'a, 'b, 'c>(
             toc_loc,
             doc_loc,
             output_loc,
-            tags_loc,
+            //tags_loc,
             frontmatter_serialised: serialised,
         }
     }));
@@ -261,12 +261,13 @@ fn link_view_sections(
 
     let base = [
         ["domain:", config.domain].join(""),
+        ["language:", data.lang].join(""),
         ["local_toc_path:", data.toc_loc].join(""),
         ["local_doc_path:", data.doc_loc].join(""),
         ["local_templates_dir:", config.templates_dir].join(""),
         ["local_output_path:", local_output_loc].join(""),
         ["relative_output_url:", relative_output_loc].join(""),
-        ["relative_tags_url:", data.tags_loc.as_str()].join(""),
+        //["relative_tags_url:", data.tags_loc.as_str()].join(""),
         ["other_view_langs:", data.other_langs.0, data.other_langs.1].join(""),
     ];
     // = base + link_list + 1 - 1 (+ 1 frontmatter, - 1 self link)
@@ -281,7 +282,7 @@ fn link_view_sections(
             .map(|(_, other_view_link, _)| other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
-    command_run(Path::new(linker_command), config.domain, None, &api_keyvals)
+    command_run(Path::new(linker_command), (config.domain, config.blog_relative), None, &api_keyvals)
 }
 
 /******************************************************************************

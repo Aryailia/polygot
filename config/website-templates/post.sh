@@ -36,13 +36,13 @@ title:平聲入去四聲是什麼：上古、中古、和現代的聲調演變
 "
 set -- \
   "domain:"~/interim/b/public \
+  "language:zh" \
   "local_make_dir:config/make" \
   "local_templates_dir:config/templates" \
   "local_toc_path:.blog/toc/zh/chinese_tones.html" \
   "local_doc_path:.blog/doc/zh/chinese_tones.html" \
   "local_output_path:public/blog/zh/chinese_tones.html" \
   "relative_output_url:blog/zh/chinese_tones.html" \
-  "relative_tags_url:blog/zh/tags.html" \
   "other_view_langs:en jp stuff" \
   "relative_en_view:blog/en/chinese_tones.html" \
   "relative_jp_view:blog/jp/chinese_tones.html" \
@@ -63,17 +63,18 @@ NEWLINE='
 
 # Declare before to get the exits
              domain="$( api_lookuP "domain" "$@" )" || exit 1
+           language="$( api_lookuP "language" "$@" )" || exit 1
 local_templates_dir="$( api_lookuP "local_templates_dir" "$@" )" || exit 1
      local_toc_path="$( api_lookuP "local_toc_path" "$@" )" || exit 1
      local_doc_path="$( api_lookuP "local_doc_path" "$@" )" || exit 1
   local_output_path="$( api_lookuP "local_output_path" "$@" )" || exit 1
 relative_output_url="$( api_lookuP "relative_output_url" "$@" )" || exit 1
-  relative_tags_url="$( api_lookuP "relative_tags_url" "$@" )" || exit 1
    other_view_langs="$( api_lookuP "other_view_langs" "$@" )" || exit 1
+
 
 # @VOLATILE: sync with left aside on changes
 # Validate existance
-for lang in ${lang}; do
+for lang in ${other_view_langs}; do
   api_lookuP "relative_${lang}_view" "$@"
 done >/dev/null
 
@@ -110,7 +111,7 @@ $( spaces="    "
   for hashtag in ${tags}; do
     printf '%s<div class="hashtag"><a href="%s">%s</a></div>\n' \
       "${spaces}" \
-      "${domain}/${relative_tags_url}#${hashtag}" \
+      "${domain}/${BLOG_RELATIVE}/tags-${language}.html#${hashtag}" \
       "#${hashtag}" \
     # end. Use 'tags.html' instead of '${domain}/${relative_tags_url}'?
   done

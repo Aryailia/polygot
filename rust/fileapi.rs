@@ -5,17 +5,19 @@ use std::process::{Command, Stdio};
 
 pub struct FileApi<'a> {
     pathbuf: PathBuf,
-    domain: &'a str,
+    env: Env<'a>,
 }
 
+type Env<'a> = (&'a str, &'a str);
 type Output = Result<String, String>;
+
 impl<'a> FileApi<'a> {
-    pub fn from_filename(api_dir: &str, extension: &str, domain: &'a str) -> Result<Self, String> {
+    pub fn from_filename(api_dir: &str, extension: &str, env: Env<'a>) -> Result<Self, String> {
         let command = Path::new(api_dir).join(Path::new(extension));
         if command.is_file() {
             Ok(Self {
                 pathbuf: command,
-                domain,
+                env,
             })
         } else {
             Err([
@@ -31,26 +33,27 @@ impl<'a> FileApi<'a> {
     // These three lines are the what each file extension API must implement
     #[inline]
     pub fn comment(&self) -> Output {
-        command_run(self.pathbuf.as_path(), self.domain, None, &["comment"])
+        command_run(self.pathbuf.as_path(), self.env, None, &["comment"])
     }
     #[inline]
     pub fn compile(&self, stdin: &[&str], toc_location: &str, body_location: &str) -> Output {
         command_run(
             self.pathbuf.as_path(),
-            self.domain,
+            self.env,
             Some(stdin),
             &["compile", toc_location, body_location],
         )
     }
     #[inline]
     pub fn frontmatter(&self, stdin: &[&str]) -> Output {
-        command_run(self.pathbuf.as_path(), self.domain, Some(stdin), &["frontmatter"])
+        command_run(self.pathbuf.as_path(), self.env, Some(stdin), &["frontmatter"])
     }
 }
 
-pub fn command_run(cmd_path: &Path, domain: &str, stdin: Option<&[&str]>, args: &[&str]) -> Output {
+pub fn command_run(cmd_path: &Path, env: Env, stdin: Option<&[&str]>, args: &[&str]) -> Output {
     let mut child = Command::new(cmd_path)
-        .env("DOMAIN", domain)
+        .env("DOMAIN", env.0)
+        .env("BLOG_RELATIVE", env.1)
         .args(args)
         .stdin(if stdin.is_some() {
             Stdio::piped()

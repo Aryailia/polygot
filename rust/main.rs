@@ -109,7 +109,7 @@ macro_rules! define_config {
                 Self {
                     $($o_id: config.$o_id,)*
                     $($r_id: config.$r_id.as_ref()
-                        .ok_or("--api-dir is a required option")
+                        .ok_or(concat!("--", $r_long, " is a required option"))
                         .or_die(1)
                         .as_str(),
                     )*
@@ -132,6 +132,7 @@ define_config! {
     @to_be_required {
         "a" "api-dir" api_dir,
         // @VOLATILE sync this with 'compile_post'
+        "b" "blog-relative" blog_relative, // blog directory inside of public_dir
         "c" "cache-dir"     cache_dir,
         "d" "domain"        domain,        // public dir as a URL
         "p" "public-dir"    public_dir,    // public dir as a path
