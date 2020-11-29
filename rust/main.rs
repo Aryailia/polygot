@@ -291,7 +291,7 @@ mod integration_tests {
     fn compile_test() {
         let post = Post::new("hello", "//").or_die(1);
         let view = post.views.first().unwrap();
-        let api = FileApi::from_filename("config/api/", "adoc").or_die(1);
+        let api = FileApi::from_filename("config/api/", "adoc", ("", "blog")).or_die(1);
         let frontmatter_string = api.frontmatter(view.body.as_slice()).unwrap();
         let frontmatter =
             Frontmatter::new(frontmatter_string.as_str(), Utc::now(), Utc::now()).or_die(1);

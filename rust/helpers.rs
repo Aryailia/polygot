@@ -26,7 +26,8 @@ pub fn parse_tags_and_push<'a>(
         if tag.contains(&TAG_BLACKLIST[..]) {
             return Err(format!(
                 "{} is an invalid tag. {:?} are the blacklisted characters",
-                tag.escape(), TAG_BLACKLIST
+                tag.escape(),
+                TAG_BLACKLIST
             ));
         } else if !list.contains(&tag) {
             list.push_and_check(tag);
@@ -43,13 +44,16 @@ pub fn parse_tags_and_push<'a>(
 }
 
 pub fn program_name() -> String {
-    std::env::current_exe().map(|pathbuf| pathbuf.file_name()
-        .map(|p| p.to_string_lossy())
-        .unwrap_or(std::borrow::Cow::Borrowed(""))
-        .to_string()
-    ).unwrap_or("".to_string())
+    std::env::current_exe()
+        .map(|pathbuf| {
+            pathbuf
+                .file_name()
+                .map(|p| p.to_string_lossy())
+                .unwrap_or(std::borrow::Cow::Borrowed(""))
+                .to_string()
+        })
+        .unwrap_or_else(|_| "".to_string())
 }
-
 
 pub fn create_parent_dir(location: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(location).parent() {

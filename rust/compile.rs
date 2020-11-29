@@ -5,7 +5,7 @@ use std::{fs, io, path::Path, time::SystemTime};
 use super::compare_mtimes;
 use super::RequiredConfigs;
 use crate::fileapi::{command_run, FileApi};
-use crate::frontmatter::{Value, Frontmatter};
+use crate::frontmatter::{Frontmatter, Value};
 use crate::helpers::create_parent_dir;
 use crate::post::Post;
 use crate::traits::{ResultExt, ShellEscape, VecExt};
@@ -35,11 +35,10 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
     let (api, path, post) = parse_text_to_post(config, pathstr, text.as_str());
 
     // Parse some metadata
-    let (out_of_date, view_sections_metadata) =
-        parse_view_sections_metadata(config, &path, &post);
+    let (out_of_date, view_sections_metadata) = parse_view_sections_metadata(config, &path, &post);
     let lang_list = post.lang_list.join(" ");
     // Must verify frontmatter before 'htmlifying_view_sections()'
-    // This prints the 
+    // This prints the
     let (views_metadata, output_targets, tags_cache) = parse_view_metadata(
         &api,
         &path,
@@ -74,10 +73,12 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
     output.push_and_check(output_targets.len().to_string());
     // The actual link-cache lines
     output.extend(output_targets.iter().map(|x| {
-        let target_path = x.1.find(':')
-            .map(|i| x.1.split_at(i + ':'.len_utf8()).1)
+        let target_path = x
+            .other_view_link
+            .find(':')
+            .map(|i| x.other_view_link.split_at(i + ':'.len_utf8()).1)
             .unwrap_or("");
-        [path.stem, x.0, target_path, x.2.as_str()].join(",")
+        [path.stem, x.lang, target_path, x.title.as_str()].join(",")
     }));
     println!("{}", output.join("\n"));
     // Tag-cache lines
@@ -94,7 +95,12 @@ fn parse_text_to_post<'a, 'b, 'c>(
 ) -> (FileApi<'c>, PathWrapper<'b>, Post<'a>) {
     // @TODO check if constructor is needed
     let path = PathWrapper::wrap(pathstr).or_die(1);
-    let api = FileApi::from_filename(config.api_dir, path.extension, (config.domain, config.blog_relative)).or_die(1);
+    let api = FileApi::from_filename(
+        config.api_dir,
+        path.extension,
+        (config.domain, config.blog_relative),
+    )
+    .or_die(1);
     let comment_marker = api.comment().or_die(1);
     let post = Post::new(text, comment_marker.as_str())
         .map_err(|err| err.with_filename(path.pathstr))
@@ -174,20 +180,31 @@ struct ViewMetadata<'a, 'b> {
     frontmatter_serialised: String,
 }
 
+#[derive(Debug)]
+struct ViewLocMetadata<'post> {
+    lang: &'post str,
+    other_view_link: String,
+    title: String,
+}
+
 #[inline]
-fn parse_view_metadata<'a, 'b, 'c>(
+fn parse_view_metadata<'post, 'b, 'c>(
     api: &'c FileApi,
     post_path: &PathWrapper,
     lang_list: &'b str,
-    sections_metadata: &'b [Section<'a>],
-    post: &Post<'a>,
+    sections_metadata: &'b [Section<'post>],
+    post: &Post<'post>,
     path_format: &str,
-) -> (Vec<ViewMetadata<'a, 'b>>, Vec<(&'a str, String, String)>, Vec<String>) {
+) -> (
+    Vec<ViewMetadata<'post, 'b>>,
+    Vec<ViewLocMetadata<'post>>,
+    Vec<String>,
+) {
     // Pre-generate the metadata for the linker
     // In particular, 'link' for all views is used by every other view
     let len = post.views.len();
 
-    let mut link_list = Vec::with_capacity(len);
+    let mut loc_metadata = Vec::with_capacity(len);
     let mut views_metadata = Vec::with_capacity(len);
     let mut tags_cache = Vec::with_capacity(len);
     views_metadata.extend(post.views.iter().enumerate().map(|(i, view)| {
@@ -209,10 +226,12 @@ fn parse_view_metadata<'a, 'b, 'c>(
             _ => "".to_string(),
         };
 
-        tags_cache.push_and_check(
-            frontmatter.format_to_tag_cache(post_path.stem, lang)
-        );
-        link_list.push_and_check((*lang, link, title));
+        tags_cache.push_and_check(frontmatter.format_to_tag_cache(post_path.stem, lang));
+        loc_metadata.push_and_check(ViewLocMetadata {
+            lang,
+            other_view_link: link,
+            title,
+        });
         ViewMetadata {
             lang,
             other_langs: exclude(lang_list, lang),
@@ -223,14 +242,14 @@ fn parse_view_metadata<'a, 'b, 'c>(
             frontmatter_serialised: serialised,
         }
     }));
-    (views_metadata, link_list, tags_cache)
+    (views_metadata, loc_metadata, tags_cache)
 }
 
 fn combine_sections_into_views(
     config: &RequiredConfigs,
     sections_metadata: &[Section],
     views_metadata: &[ViewMetadata],
-    link_list: &[(&str, String, String)],
+    loc_metadata: &[ViewLocMetadata],
     linker_loc: &str,
 ) {
     // Linker step (put the ToC, doc, and disparate parts together)
@@ -240,7 +259,7 @@ fn combine_sections_into_views(
         eprintln!("linking {} {}", lang, target.escape());
         create_parent_dir(target.as_str()).or_die(1);
         let linker_stdout =
-            link_view_sections(linker_loc, &config, target.as_str(), &link_list, data).or_die(1);
+            link_view_sections(linker_loc, &config, target.as_str(), loc_metadata, data).or_die(1);
         if !linker_stdout.is_empty() {
             eprintln!("{}", linker_stdout);
         }
@@ -254,7 +273,7 @@ fn link_view_sections(
     linker_command: &str,
     config: &RequiredConfigs,
     local_output_loc: &str,
-    link_list: &[(&str, String, String)],
+    loc_metadata: &[ViewLocMetadata],
     data: &ViewMetadata,
 ) -> Result<String, String> {
     let relative_output_loc = data.output_loc.as_str();
@@ -271,18 +290,23 @@ fn link_view_sections(
         ["other_view_langs:", data.other_langs.0, data.other_langs.1].join(""),
     ];
     // = base + link_list + 1 - 1 (+ 1 frontmatter, - 1 self link)
-    let capacity = base.len() + link_list.len();
+    let capacity = base.len() + loc_metadata.len();
     let mut api_keyvals = Vec::with_capacity(capacity);
     api_keyvals.push_and_check(data.frontmatter_serialised.as_str());
     api_keyvals.extend(base.iter().map(|s| s.as_str()));
     api_keyvals.extend(
-        link_list
+        loc_metadata
             .iter()
-            .filter(|(l, _, _)| *l != data.lang)
-            .map(|(_, other_view_link, _)| other_view_link.as_str()),
+            .filter(|x| x.lang != data.lang)
+            .map(|x| x.other_view_link.as_str()),
     );
     debug_assert_eq!(capacity, api_keyvals.len());
-    command_run(Path::new(linker_command), (config.domain, config.blog_relative), None, &api_keyvals)
+    command_run(
+        Path::new(linker_command),
+        (config.domain, config.blog_relative),
+        None,
+        &api_keyvals,
+    )
 }
 
 /******************************************************************************

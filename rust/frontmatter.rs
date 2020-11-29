@@ -212,9 +212,11 @@ impl<'a> Frontmatter<'a> {
         };
 
         let mut tag_line_list = Vec::with_capacity(self.tags.len());
-        tag_line_list.extend(self.tags.iter().map(|tag| {
-            [*tag, date.as_str(), file_stem, lang, title].join(",")
-        }));
+        tag_line_list.extend(
+            self.tags
+                .iter()
+                .map(|tag| [*tag, date.as_str(), file_stem, lang, title].join(",")),
+        );
         tag_line_list.join("\n")
     }
 
@@ -262,7 +264,6 @@ impl<'a> Frontmatter<'a> {
         meta_keyvals.join("")
     }
 }
-
 
 // @MARKUP_RULE
 fn validate_and_count(frontmatter: &str) -> Result<usize, ParseError> {
@@ -332,7 +333,7 @@ mod frontmatter_test {
 
     #[test]
     fn test() {
-        let api = FileApi::from_filename("config/api", "adoc").unwrap();
+        let api = FileApi::from_filename("config/api", "adoc", ("", "blog")).unwrap();
         let pathstr = "config/published/chinese_tones.adoc";
 
         let file = std::fs::read_to_string(pathstr).unwrap();
@@ -342,7 +343,10 @@ mod frontmatter_test {
             let lang = view.lang.unwrap_or("");
             let fms = api.frontmatter(&view.body).unwrap();
             let frontmatter = Frontmatter::new(&fms, now, now).unwrap();
-            println!("{:?}", frontmatter.format_to_tag_cache("chinese_tones", lang));
+            println!(
+                "{:?}",
+                frontmatter.format_to_tag_cache("chinese_tones", lang)
+            );
         });
         //println!("{:?}", post);
     }
