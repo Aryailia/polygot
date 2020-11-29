@@ -1,0 +1,3 @@
+* Add very simple web server for previewing files
+* Syntax highlighting via rust
+* Support for linking posts together into a series

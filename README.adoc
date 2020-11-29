@@ -7,6 +7,19 @@ A static site generator built with POSIX shell (it can run with 'dash') for ease
 You can compile markdown with Raph Levien's 'link:https://github.com/raphlinus/pulldown-cmark[pulldown-cmark]' (written in Rust! Also https://commonmark.org/[CommonMark] is pretty cool! A better flavour of Markdown)
 or John MacFarlane's 'link:https://pandoc.org/[pandoc]' (https://github.com/jgm/pandoc[github repo]).
 
+== Requirements
+
+Nothing other than POSIX shell is truly required.
+
+* Asciidoctor/Pandoc/Emacs/etc. depending on what
+* Pygments: This is what I currently using for code syntax highlighting (this needs python)
+* POSIX shell: pretty much any Linux/Mac distribution. On Windows you can get this via WSL or via bash by install https://git-scm.com[git]
+
+If you want to be able to compile
+
+* cmake: Required by libc dependency
+* rust: stable is fine
+
 == Design Goals
 
 === Reader-facing
