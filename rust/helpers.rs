@@ -17,7 +17,7 @@ pub fn parse_tags_and_push<'a>(
     list: &mut Vec<&'a str>,
     line: &'a str,
     ignore_list: &[&str],
-    warn_duplicates: bool,
+    fail_on_duplicates: bool,
 ) -> Result<Vec<&'a str>, String> {
     let len = line.split_whitespace().count();
     let mut tags_added = Vec::with_capacity(len);
@@ -32,12 +32,14 @@ pub fn parse_tags_and_push<'a>(
         } else if !list.contains(&tag) {
             list.push_and_check(tag);
             tags_added.push_and_check(tag);
-        } else if warn_duplicates {
+        } else if fail_on_duplicates {
             return Err([
                 tag.escape().as_str(),
                 " was already defined. Cannot have duplicates",
             ]
             .join(""));
+        } else { // if !fail_on_duplicates
+             tags_added.push_and_check(tag);
         }
     }
     Ok(tags_added)
