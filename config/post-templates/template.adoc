@@ -5,6 +5,10 @@
 // api_set_lang: zh
 :title: 
 // api_set_lang: ALL
+
+// This is overwritten during compilation by file API
+:imagesdir: ../images
+
 :author:       <!-- INSERT: author -->
 :date-created: <!-- INSERT: today -->
 :date-updated: <!-- INSERT: today -->
