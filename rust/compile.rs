@@ -10,7 +10,6 @@ use crate::helpers::create_parent_dir;
 use crate::post::Post;
 use crate::traits::{ResultExt, ShellEscape, VecExt};
 
-//run: DOMAIN='' ../make.sh build-rust compile-blog
 pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output_template: &str) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
@@ -88,11 +87,11 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
 /******************************************************************************/
 // Parse the custom markup
 #[inline]
-fn parse_text_to_post<'a, 'b, 'c>(
-    config: &'c RequiredConfigs,
-    pathstr: &'b str,
-    text: &'a str,
-) -> (FileApi<'c>, PathWrapper<'b>, Post<'a>) {
+fn parse_text_to_post<'post, 'path, 'config>(
+    config: &'config RequiredConfigs,
+    pathstr: &'path str,
+    text: &'post str,
+) -> (FileApi<'config>, PathWrapper<'path>, Post<'post>) {
     // @TODO check if constructor is needed
     let path = PathWrapper::wrap(pathstr).or_die(1);
     let api = FileApi::from_filename(
@@ -111,14 +110,14 @@ fn parse_text_to_post<'a, 'b, 'c>(
 /******************************************************************************/
 // For each view, now that we have what should be source code,
 // run the parser/compiler associated with the filetype of the source
-type Section<'a> = (&'a str, String, String);
+type Section<'post> = (&'post str, String, String);
 
 #[inline]
-fn parse_view_sections_metadata<'a>(
+fn parse_view_sections_metadata<'post>(
     config: &RequiredConfigs,
     post_path: &PathWrapper,
-    post: &Post<'a>,
-) -> (bool, Vec<Section<'a>>) {
+    post: &Post<'post>,
+) -> (bool, Vec<Section<'post>>) {
     let mut to_html_metadata = Vec::with_capacity(post.views.len());
     let mut out_of_date = config.force; // Always recompile/etc if --force
 
@@ -170,11 +169,11 @@ fn htmlify_view_sections(api: &FileApi, post: &Post, metadata: &[Section]) {
 
 /******************************************************************************/
 // For each view, join the disparate sections into the final product
-struct ViewMetadata<'a, 'b> {
-    lang: &'a str,
-    other_langs: (&'b str, &'b str),
-    toc_loc: &'b str,
-    doc_loc: &'b str,
+struct ViewMetadata<'post, 'compile> {
+    lang: &'post str,
+    other_langs: (&'compile str, &'compile str),
+    toc_loc: &'compile str,
+    doc_loc: &'compile str,
     output_loc: String,
     //tags_loc: String,
     frontmatter_serialised: String,
@@ -187,16 +186,17 @@ struct ViewLocMetadata<'post> {
     title: String,
 }
 
+
 #[inline]
-fn parse_view_metadata<'post, 'b, 'c>(
-    api: &'c FileApi,
+fn parse_view_metadata<'post, 'compile>(
+    api: &FileApi,
     post_path: &PathWrapper,
-    lang_list: &'b str,
-    sections_metadata: &'b [Section<'post>],
+    lang_list: &'compile str,
+    sections_metadata: &'compile [Section<'post>],
     post: &Post<'post>,
     path_format: &str,
 ) -> (
-    Vec<ViewMetadata<'post, 'b>>,
+    Vec<ViewMetadata<'post, 'compile>>,
     Vec<ViewLocMetadata<'post>>,
     Vec<String>,
 ) {
@@ -331,16 +331,16 @@ fn to_datetime(
     Ok(Utc.timestamp(secs as i64, nano as u32))
 }
 
-struct PathWrapper<'a> {
-    pathstr: &'a str,
-    stem: &'a str,
-    extension: &'a str,
+struct PathWrapper<'path> {
+    pathstr: &'path str,
+    stem: &'path str,
+    extension: &'path str,
     created: DateTime<Utc>,
     updated: DateTime<Utc>,
 }
 
-impl<'a> PathWrapper<'a> {
-    fn wrap(pathstr: &'a str) -> Result<Self, String> {
+impl<'path> PathWrapper<'path> {
+    fn wrap(pathstr: &'path str) -> Result<Self, String> {
         let path = Path::new(pathstr);
         let stem_os = path.file_stem().ok_or_else(|| {
             [
