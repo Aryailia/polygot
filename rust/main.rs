@@ -22,7 +22,7 @@ mod helpers;
 mod post;
 mod traits;
 
-use compile::{compile, compile2};
+use compile::compile;
 use helpers::program_name;
 use traits::{ResultExt, ShellEscape, VecExt};
 
@@ -181,9 +181,7 @@ fn main() {
         2, "compile-markup" => {
             let source = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
-            let linker_loc = &unwrapped_config.linker;
-            let output_template = &unwrapped_config.output_format;
-            compile(&unwrapped_config, &source, linker_loc, output_template);
+            compile(&unwrapped_config, &[PathBuf::from(source)]);
         }
 
         2, "compile" => {
@@ -191,7 +189,7 @@ fn main() {
             let unwrapped_config = RequiredConfigs::unwrap(&config);
             let input_list = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
 
-            compile2(&unwrapped_config, input_list.as_slice());
+            compile(&unwrapped_config, input_list.as_slice());
         }
     });
 }
