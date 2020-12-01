@@ -6,7 +6,13 @@
 #![allow(dead_code)]
 use chrono::offset::Local;
 use filetime::{set_file_mtime, FileTime};
-use std::{env, io::ErrorKind, path::Path, process::exit, str::Chars};
+use std::{
+    env, fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    process::exit,
+    str::Chars,
+};
 
 mod compile;
 mod custom_errors;
@@ -16,6 +22,7 @@ mod helpers;
 mod post;
 mod traits;
 
+//use compile::{compile, compile2};
 use compile::compile;
 use helpers::program_name;
 use traits::{ResultExt, ShellEscape, VecExt};
@@ -148,7 +155,9 @@ fn main() {
             println!("{}", Local::now().to_rfc2822());
         }
         3, "is-first-newer-than" => {
-            if compare_mtimes(args.get(1).unwrap(), args.get(2).unwrap()) {
+            let base = Path::new(args.get(1).unwrap());
+            let against = Path::new(args.get(2).unwrap());
+            if compare_mtimes(base, against)  {
                 exit(0)
             } else {
                 exit(1)
@@ -164,6 +173,18 @@ fn main() {
             let output_template = args.get(3).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
             compile(&unwrapped_config, &source, &linker_loc, &output_template);
+        }
+
+        6, "compile" => {
+            let published_dir = args.get(1).unwrap();
+            let linker_loc = args.get(2).unwrap();
+            let output_template = args.get(3).unwrap();
+            let tags_cache_loc = args.get(4).unwrap();
+            let link_cache_loc = args.get(5).unwrap();
+            let unwrapped_config = RequiredConfigs::unwrap(&config);
+            let input_list = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
+
+            //compile2(&unwrapped_config, input_list.as_slice(), linker_loc.as_str(), output_template.as_str(), tags_cache_loc.as_str(), link_cache_loc.as_str());
         }
     });
 }
@@ -192,21 +213,35 @@ fn sync_last_updated(first: &str, date_source: &str) -> ! {
     exit(0)
 }
 
-fn compare_mtimes(source: &str, target: &str) -> bool {
-    let source_date = Path::new(source)
+fn compare_mtimes(source: &Path, target: &Path) -> bool {
+    let source_date = source
         .metadata()
         .map(|metadata| FileTime::from_last_modification_time(&metadata))
-        .map_err(|err| [source.escape().as_str(), ": ", err.to_string().as_str()].join(""))
+        .map_err(|err| {
+            [
+                source.to_string_lossy().escape().as_str(),
+                ": ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })
         .or_die(1);
 
-    let target_date = Path::new(target)
+    let target_date = target
         .metadata()
         .map(|metadata| FileTime::from_last_modification_time(&metadata))
         .or_else(|err| match err.kind() {
             ErrorKind::NotFound => Ok(FileTime::zero()),
             _ => Err(err),
         })
-        .map_err(|err| [target.escape().as_str(), ": ", err.to_string().as_str()].join(""))
+        .map_err(|err| {
+            [
+                target.to_string_lossy().escape().as_str(),
+                ": ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })
         .or_die(1);
 
     source_date > target_date
@@ -278,6 +313,45 @@ impl<'a> Iterator for OptionsSplit<'a> {
             OptionsSplitState::Short => Some(&rest[0..ch.len_utf8()]),
         }
     }
+}
+
+fn shallow_walk(dir_loc: &str, is_verbose: bool) -> Result<Vec<PathBuf>, String> {
+    // @TODO: see if a there is a good way to precalculate
+    let walk_dir = fs::read_dir(dir_loc).map_err(|err| {
+        [
+            "Cannot read ",
+            dir_loc.escape().as_str(),
+            ". ",
+            err.to_string().as_str(),
+        ]
+        .join("")
+    })?;
+
+    let mut list_of_paths = Vec::new();
+    for entry in walk_dir {
+        let entry = entry.map_err(|err| {
+            [
+                "Error while shallow walking ",
+                dir_loc.escape().as_str(),
+                " . ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })?;
+        let path = entry.path();
+        if path.is_file() {
+            list_of_paths.push(path);
+        } else if is_verbose {
+            return Err([
+                "Skipping processing ",
+                path.to_string_lossy().escape().as_str(),
+                " because it is a directory.",
+            ]
+            .join(""));
+        }
+    }
+
+    Ok(list_of_paths)
 }
 
 #[cfg(test)]

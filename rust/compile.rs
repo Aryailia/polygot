@@ -1,6 +1,10 @@
 // This brings the disparate parts together to do the compile pipeline.
 use chrono::{DateTime, TimeZone, Utc};
-use std::{fs, io, path::Path, time::SystemTime};
+use std::{
+    fs, io,
+    path::Path,
+    time::SystemTime,
+};
 
 use super::compare_mtimes;
 use super::RequiredConfigs;
@@ -31,7 +35,7 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
         .or_die(1);
 
     // C analogy: "parse" into views
-    let (api, path, post) = parse_text_to_post(config, pathstr, text.as_str());
+    let (api, path, post) = parse_text_to_post(config, Path::new(pathstr), text.as_str());
 
     // Parse some metadata
     let (out_of_date, view_sections_metadata) = parse_view_sections_metadata(config, &path, &post);
@@ -89,22 +93,22 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
 #[inline]
 fn parse_text_to_post<'post, 'path, 'config>(
     config: &'config RequiredConfigs,
-    pathstr: &'path str,
+    path: &'path Path,
     text: &'post str,
 ) -> (FileApi<'config>, PathWrapper<'path>, Post<'post>) {
     // @TODO check if constructor is needed
-    let path = PathWrapper::wrap(pathstr).or_die(1);
+    let path_obj = PathWrapper::wrap(path).or_die(1);
     let api = FileApi::from_filename(
         config.api_dir,
-        path.extension,
+        path_obj.extension,
         (config.domain, config.blog_relative),
     )
     .or_die(1);
     let comment_marker = api.comment().or_die(1);
     let post = Post::new(text, comment_marker.as_str())
-        .map_err(|err| err.with_filename(path.pathstr))
+        .map_err(|err| err.with_filename(path.to_string_lossy()))
         .or_die(1);
-    (api, path, post)
+    (api, path_obj, post)
 }
 
 /******************************************************************************/
@@ -142,8 +146,8 @@ fn parse_view_sections_metadata<'post>(
         ]
         .join("");
 
-        out_of_date |= compare_mtimes(post_path.pathstr, toc_loc.as_str())
-            || compare_mtimes(post_path.pathstr, doc_loc.as_str());
+        out_of_date |= compare_mtimes(post_path.path, Path::new(toc_loc.as_str()))
+            || compare_mtimes(post_path.path, Path::new(doc_loc.as_str()));
         (lang, toc_loc, doc_loc)
     }));
     // Compile step (makes table of contents and document itself)
@@ -186,7 +190,6 @@ struct ViewLocMetadata<'post> {
     title: String,
 }
 
-
 #[inline]
 fn parse_view_metadata<'post, 'compile>(
     api: &FileApi,
@@ -214,7 +217,7 @@ fn parse_view_metadata<'post, 'compile>(
             //       frontmatter is extracted.
             //       Or perhaps make frontmatter scripts retain newlines
             //       so that this works properly?
-            .map_err(|err| err.with_filename(post_path.pathstr))
+            .map_err(|err| err.with_filename(post_path.path.to_string_lossy()))
             .or_die(1);
         let (lang, toc_loc, doc_loc) = &sections_metadata[i];
         let output_loc = frontmatter.format(path_format, post_path.stem, lang);
@@ -332,7 +335,7 @@ fn to_datetime(
 }
 
 struct PathWrapper<'path> {
-    pathstr: &'path str,
+    path: &'path Path,
     stem: &'path str,
     extension: &'path str,
     created: DateTime<Utc>,
@@ -340,12 +343,11 @@ struct PathWrapper<'path> {
 }
 
 impl<'path> PathWrapper<'path> {
-    fn wrap(pathstr: &'path str) -> Result<Self, String> {
-        let path = Path::new(pathstr);
+    fn wrap(path: &'path Path) -> Result<Self, String> {
         let stem_os = path.file_stem().ok_or_else(|| {
             [
                 "The post path ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 " does not is not a path to a file",
             ]
             .join("")
@@ -353,7 +355,7 @@ impl<'path> PathWrapper<'path> {
         let ext_os = path.extension().ok_or_else(|| {
             [
                 "The post ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 " does not have a file extension",
             ]
             .join("")
@@ -364,7 +366,7 @@ impl<'path> PathWrapper<'path> {
                 "The stem ",
                 stem_os.to_string_lossy().escape().as_str(),
                 " in ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 " contains invalid UTF8",
             ]
             .join("")
@@ -374,7 +376,7 @@ impl<'path> PathWrapper<'path> {
                 "The extension",
                 ext_os.to_string_lossy().escape().as_str(),
                 " in ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 " contains invalid UTF8",
             ]
             .join("")
@@ -383,9 +385,8 @@ impl<'path> PathWrapper<'path> {
         let meta = path.metadata().map_err(|err| {
             [
                 "Cannot read metadata of ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 ". ",
-                pathstr,
                 err.to_string().as_str(),
             ]
             .join("")
@@ -393,7 +394,7 @@ impl<'path> PathWrapper<'path> {
         let updated = to_datetime(meta.modified()).map_err(|(my_err, sys_err)| {
             [
                 "The file created date of ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 my_err,
                 ". ",
                 sys_err.as_str(),
@@ -403,7 +404,7 @@ impl<'path> PathWrapper<'path> {
         let created = to_datetime(meta.created()).map_err(|(my_err, sys_err)| {
             [
                 "The file last updated date metadata of ",
-                pathstr.escape().as_str(),
+                path.to_string_lossy().escape().as_str(),
                 my_err,
                 ". ",
                 sys_err.as_str(),
@@ -412,7 +413,7 @@ impl<'path> PathWrapper<'path> {
         })?;
 
         Ok(Self {
-            pathstr,
+            path,
             stem,
             extension,
             created,

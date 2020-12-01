@@ -18,7 +18,7 @@ fn error_writer_allocations() {
     assert!(!err.to_string().is_empty());
     let err: ParseError = (10, "The caturday\n", Cow::from("the mat")).into();
     assert!(!err.to_string().is_empty());
-    assert!(!err.with_filename("fat.adoc").to_string().is_empty());
+    assert!(!err.with_filename(Cow::Borrow("fat.adoc")).to_string().is_empty());
 }
 
 //#[derive(Debug)]
@@ -36,7 +36,7 @@ pub struct ParseError<'a> {
 }
 
 impl<'a> ParseError<'a> {
-    pub fn with_filename<'b>(self, filename: &'b str) -> FullParseError<'a, 'b> {
+    pub fn with_filename<'b>(self, filename: Cow<'b, str>) -> FullParseError<'a, 'b> {
         FullParseError {
             filename,
             error: self,
@@ -69,7 +69,7 @@ impl<'a> ParseError<'a> {
 
 #[derive(Debug)]
 pub struct FullParseError<'a, 'b> {
-    filename: &'b str,
+    filename: Cow<'b, str>,
     error: ParseError<'a>,
 }
 impl<'a, 'b> fmt::Display for FullParseError<'a, 'b> {
@@ -93,7 +93,7 @@ impl<'a, 'b> fmt::Display for FullParseError<'a, 'b> {
         let mut buffer = String::with_capacity(capacity);
         pad(&mut buffer, digit_len, "");
         buffer.push_str("--> ");
-        buffer.push_str(self.filename);
+        buffer.push_str(&self.filename);
         buffer.push(':');
         buffer.push_str(row_string.as_str());
         if line_count > 1 {
