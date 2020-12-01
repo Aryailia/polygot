@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[derive(Debug)]
 pub struct FileApi<'a> {
     pathbuf: PathBuf,
     env: Env<'a>,

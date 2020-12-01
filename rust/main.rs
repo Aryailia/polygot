@@ -22,8 +22,7 @@ mod helpers;
 mod post;
 mod traits;
 
-//use compile::{compile, compile2};
-use compile::compile;
+use compile::{compile, compile2};
 use helpers::program_name;
 use traits::{ResultExt, ShellEscape, VecExt};
 
@@ -184,7 +183,7 @@ fn main() {
             let unwrapped_config = RequiredConfigs::unwrap(&config);
             let input_list = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
 
-            //compile2(&unwrapped_config, input_list.as_slice(), linker_loc.as_str(), output_template.as_str(), tags_cache_loc.as_str(), link_cache_loc.as_str());
+            compile2(&unwrapped_config, input_list.as_slice(), linker_loc.as_str(), output_template.as_str(), tags_cache_loc.as_str(), link_cache_loc.as_str());
         }
     });
 }
