@@ -5,7 +5,8 @@ use chrono::{DateTime, TimeZone, Utc};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::{
-    fs, io,
+    fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -26,17 +27,8 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
     // - one view <> one linked output file
 
     // C analogy: read the meta source file
-    let text = fs::read_to_string(pathstr)
-        .map_err(|err| {
-            [
-                "Cannot read ",
-                pathstr.escape().as_str(),
-                ". ",
-                err.to_string().as_str(),
-            ]
-            .join("")
-        })
-        .or_die(1);
+    let mut text = String::new();
+    read_file(Path::new(pathstr), &mut text).or_die(1);
 
     // C analogy: "parse" into views
     let (api, path, post) = parse_text_to_post(config, Path::new(pathstr), text.as_str());
@@ -93,16 +85,18 @@ pub fn compile(config: &RequiredConfigs, pathstr: &str, linker_loc: &str, output
     println!("{}", tags_cache.join("\n"));
 }
 
-fn read_file(path: &Path) -> Result<String, String> {
-    fs::read_to_string(path).map_err(|err| {
-        [
-            "Cannot read ",
-            path.to_string_lossy().escape().as_str(),
-            ". ",
-            err.to_string().as_str(),
-        ]
-        .join("")
-    })
+fn read_file(path: &Path, buffer: &mut String) -> Result<usize, String> {
+    fs::File::open(path)
+        .and_then(|mut file| file.read_to_string(buffer))
+        .map_err(|err| {
+            [
+                "Cannot read ",
+                path.to_string_lossy().escape().as_str(),
+                ". ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })
 }
 
 //fn analyze_times(cache_dir: &str) {
@@ -112,19 +106,21 @@ fn read_file(path: &Path) -> Result<String, String> {
 //}
 
 //run: ../make.sh build-rust test
-pub fn compile2(
-    config: &RequiredConfigs,
-    input_list: &[PathBuf],
-) {
+pub fn compile2(config: &RequiredConfigs, input_list: &[PathBuf]) {
     let file_count = input_list.len();
+    let mut id_map = HashMap::with_capacity(file_count);
     let mut input_paths = Vec::with_capacity(file_count);
     for x in input_list {
-        input_paths.push_and_check(PathWrapper::wrap(x).or_die(1));
+        let path = PathWrapper::wrap(x).or_die(1);
+        id_map.insert(path.stem, ());
+        input_paths.push_and_check(path);
     }
 
     let mut text_list = Vec::with_capacity(file_count);
     for path in &input_paths {
-        text_list.push_and_check(read_file(path.path).or_die(1));
+        let mut text = String::new();
+        read_file(path.path, &mut text).or_die(1);
+        text_list.push_and_check(text);
     }
     let (shared_metadata, api_and_comment, post_list, lang_list) =
         analyse_metadata(config, &text_list, &input_paths);
@@ -136,12 +132,7 @@ pub fn compile2(
         post_list,
     );
     // We can drop 'text_list' and 'api_and_comment' here
-    join_partials(
-        config,
-        &input_paths,
-        &shared_metadata,
-        &lang_list,
-    );
+    join_partials(config, id_map, &input_paths, &shared_metadata, &lang_list);
 }
 
 // HTMLify the post (i.e. run through asciidoctor, etc.)
@@ -155,8 +146,10 @@ fn htmlify_into_partials(
 ) {
     debug_assert_eq!(input_list.len(), post_list.len());
 
-    let log_result = read_file(Path::new(&config.changelog));
-    let log_str = log_result.as_ref().map(String::as_str).unwrap_or("");
+    let mut log_result = String::new();
+    let log_str = read_file(Path::new(&config.changelog), &mut log_result)
+        .map(|_| log_result.as_str())
+        .unwrap_or("");
     let log = UpdateTimes::new(log_str)
         .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
         .or_die(1);
@@ -181,7 +174,8 @@ fn htmlify_into_partials(
             buffer.push('"');
         }
 
-        if log.check_if_outdated(path) {
+        // @TODO
+        if false && log.check_if_outdated(path) {
             let toc_loc = view_data.toc_loc.as_str();
             let doc_loc = view_data.doc_loc.as_str();
             let (api, _) = api_and_comment.get(path.extension).unwrap();
@@ -533,9 +527,10 @@ fn combine_sections_into_views(
 }
 
 #[derive(Debug)]
-struct LinkerViewMetadata<'lang_group_list, 'frontmatter_string> {
+struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
+    id: &'shared str,
     frontmatter_serialised: String,
-    tags_cache: String,
+    tags_cache_line: String,
     lang: &'lang_group_list str,
     relative_output_loc: String,
     title: &'frontmatter_string str,
@@ -543,6 +538,7 @@ struct LinkerViewMetadata<'lang_group_list, 'frontmatter_string> {
 }
 fn join_partials(
     config: &RequiredConfigs,
+    id_map: HashMap<&str, ()>,
     input_list: &[PathWrapper],
     shared_metadata: &MetadataCache,
     lang_group_list: &[String],
@@ -567,9 +563,10 @@ fn join_partials(
 
         linker_metadata.push_and_check(LinkerViewMetadata {
             frontmatter_serialised: frontmatter.serialise(),
-            tags_cache: frontmatter.format_to_tag_cache(path.stem, lang),
+            tags_cache_line: frontmatter.format_to_tag_cache(path.stem, lang),
             lang,
             relative_output_loc: frontmatter.format(config.output_format, path.stem, lang),
+            id: path.stem,
             title: match frontmatter.lookup("title") {
                 Some(Value::Utf8(s)) => s,
                 _ => "",
@@ -578,6 +575,17 @@ fn join_partials(
         });
     }
 
+    // Must update the cache before linking as linker uses this info
+    write_caches(config, id_map, &linker_metadata);
+
+    // Format hello
+    // @TODO these should both be sorted
+    // so we can do a better
+    //tags.cache.lines()
+    //    .filter(|line| line.split(',').get(3).unwrap_or("") == )
+    //    .chain()
+
+    // Run the linker to join the partials (toc and doc)
     let mut cursor = 1;
     debug_assert!(cursor != 0);
     let mut post_data = &linker_metadata[..];
@@ -603,12 +611,16 @@ fn join_partials(
         // @TODO link cache
         // @TODO tags cache
         // @TODO series cache
-        print!("{}", command_run(
-            Path::new(config.linker),
-            (config.domain, config.blog_relative),
-            None,
-            &args,
-        ).or_die(1));
+        print!(
+            "{}",
+            command_run(
+                Path::new(config.linker),
+                (config.domain, config.blog_relative),
+                None,
+                &args,
+            )
+            .or_die(1)
+        );
 
         eprintln!("Linking {} {}", my_data.lang, target.escape());
         if config.verbose {
@@ -617,49 +629,102 @@ fn join_partials(
             for line in &args[1..] {
                 eprint!("{}\n", line);
             }
-            eprintln!();
+            eprint!("\n");
         }
-
     }
 }
 
-macro_rules! build_with_counted_capacity {
-    (let mut $var:ident = $base:expr,
+fn write_caches(
+    config: &RequiredConfigs,
+    id_map: HashMap<&str, ()>,
+    linker_metadata: &[LinkerViewMetadata],
+) {
+    debug_assert_eq!(id_map.len(), linker_metadata.len());
+    let view_count = linker_metadata.len();
+
+    //let mut tags = (config.tags_cache.as_str(), String::new(), view_count, 2, Vec::new());
+    //let mut link = (config.link_cache.as_str(), String::new(), view_count, 0, Vec::new());
+    //    //(config.tags_cache.as_str(), String::new(), view_count, 2, Vec::new()),
+    //    //(config.link_cache.as_str(), String::new(), view_count, 0, Vec::new()),
+    //    //(config.tags_cache.as_str(), String::new(), 1),
+    fn read_and_sieve_in_old<'a>(
+        id_map: &HashMap<&str, ()>,
+        pathstr: &str,
+        old_cache: &'a mut String,
+        count: usize,
+        id_index: usize,
+    ) -> Vec<Cow<'a, str>>  {
+        use crate::traits::BoolExt;
+        let path = Path::new(pathstr);
+        if let Err(err) = read_file(path, old_cache) {
+            eprintln!("Generating {}...\n  {}", pathstr.escape(), err.to_string());
+
+        }
+
+        let mut cache = Vec::with_capacity(old_cache.lines().count() + count);
+        cache.extend(old_cache.lines().filter_map(|line| {
+            let id = line.split(',').nth(id_index).unwrap_or("");
+            (!id_map.contains_key(id)).to_some(Cow::Borrowed(line))
+        }));
+        cache
+    }
+
+    let mut tags_old = String::new();
+    let tags_loc = config.tags_cache.as_str();
+    let mut tags = read_and_sieve_in_old(&id_map, tags_loc, &mut tags_old, view_count, 2);
+    tags.extend(linker_metadata.iter().flat_map(|x| {
+        x.tags_cache_line.split('\n').map(|x| Cow::Borrowed(x))
+    }));
+    tags.sort();
+    eprintln!("Saving tags cache to {}", tags_loc.escape());
+    fs::write(tags_loc, tags.join("\n")).or_die(1);
+    //println!("{:#?}\n", tags);
+
+    let mut link_old = String::new();
+    let link_loc = config.link_cache.as_str();
+    let mut link = read_and_sieve_in_old(&id_map, link_loc, &mut link_old, view_count, 0);
+    link.extend(linker_metadata.iter().map(|x| {
+        Cow::Owned([x.id, x.lang, x.relative_output_loc.as_str()].join(","))
+    }));
+    link.sort();
+    eprintln!("Saving link cache to {}", link_loc.escape());
+    fs::write(link_loc, link.join("\n")).or_die(1);
+    //println!("{:#?}\n", link);
+}
+
+macro_rules! build_and_count_capacity {
+    (let mut $var:ident, $capacity:ident = $base:expr,
         +
         $($entry:expr,)*
     ) => {
-        let capacity = $base + build_with_counted_capacity!(@count $($entry,)*);
-        let mut $var = Vec::with_capacity(capacity);
+        let $capacity = $base + build_and_count_capacity!(@count $($entry,)*);
+        let mut $var = Vec::with_capacity($capacity);
         $($var.push_and_check($entry);)*
     };
     (@count) => { 0 };
     (@count $entry:expr, $($tt:tt)*) => {
-        1 + build_with_counted_capacity!(@count $($tt)*);
+        1 + build_and_count_capacity!(@count $($tt)*);
     };
 }
 
 // Mostly separate this for the white space
-fn fmt_linker_args<'frontmatter_string>(
+fn fmt_linker_args<'shared, 'frontmatter_string>(
     config: &RequiredConfigs,
-    shared: &ViewMetadata2,
+    shared: &'shared ViewMetadata2,
     post_data: &[LinkerViewMetadata],
-    data: &'frontmatter_string LinkerViewMetadata<'_, 'frontmatter_string>,
+    data: &'frontmatter_string LinkerViewMetadata<'shared, '_, 'frontmatter_string>,
 ) -> (String, Vec<Cow<'frontmatter_string, str>>) {
     let relative_target = data.relative_output_loc.as_str();
     let local_target = [config.public_dir, "/", relative_target].join("");
     let lang_count = shared.post_lang_count;
     // ALL label is lang_count of 0, we want: min(0, lang_count - 1)
-    let other_lang_count = if lang_count > 0 {
-        lang_count - 1
-    } else {
-        0
-    };
+    let other_lang_count = if lang_count > 0 { lang_count - 1 } else { 0 };
 
     // File metadata
 
     // Counts the capacity for me and pushes
-    build_with_counted_capacity! {
-        let mut api_keyvals = other_lang_count,
+    build_and_count_capacity! {
+        let mut api_keyvals, capacity = other_lang_count,
         +
         // User data (specified within post) pushed as first arg
         Cow::Borrowed(data.frontmatter_serialised.as_str()),
@@ -681,25 +746,21 @@ fn fmt_linker_args<'frontmatter_string>(
     }
 
     for i in 0..lang_count {
-        //println!("{:?}", shared.view_index, lang_count);
         if i == shared.view_index {
             continue;
         }
-        api_keyvals.push_and_check(Cow::Owned([
-            "relative_",
-            post_data[i].lang,
-            "_view:",
-            post_data[i].relative_output_loc.as_str(),
-            //relative_target.as_str(),
-        ].join("")));
+        api_keyvals.push_and_check(Cow::Owned(
+            [
+                "relative_",
+                post_data[i].lang,
+                "_view:",
+                post_data[i].relative_output_loc.as_str(),
+                //relative_target.as_str(),
+            ]
+            .join(""),
+        ));
     }
-    //api_keyvals.extend(
-    //    loc_metadata
-    //        .iter()
-    //        .filter(|x| x.lang != data.lang)
-    //        .map(|x| x.other_view_link.as_str()),
-    //);
-    //debug_assert_eq!(capacity, api_keyvals.len());
+    assert_eq!(capacity, api_keyvals.len());
 
     (local_target, api_keyvals)
 }

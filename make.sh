@@ -138,30 +138,18 @@ main() {
       #build_rust
       #compile_post "${PUBLISHED}/blue.adoc"
       #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
-      compile_blog2
+      compile_blog
 
     ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
   esac; done
 }
-blah() {
-  <<EOF cat - >"${TAGS_CACHE}"
-Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
-Junk,2019-11-01,stuff,jp,これはこれはどういう意味なんだろう
-Linguistics,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
-Linguistics,yo,happy-times,zh,辣妹
-EOF
-}
-
-#sieve_out_name() {
-#  # $1: the filename to remove (no extension)
-#  while IFS=',' read -r _tag _time _name _lang _title; do
-#    if [ -n "${_tag}" ] && [ "${_name}" != "${1}" ]; then
-#      outln "${_tag},${_time},${_name},${_lang},${_title}"
-#    fi
-#  done
-#  if  [ -n "${_tag}" ] && [ "${_name}" != "${1}" ]; then
-#    outln "${_tag},${_time},${_name},${_lang},${_title}"
-#  fi
+#blah() {
+#  <<EOF cat - >"${TAGS_CACHE}"
+#Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
+#Junk,2019-11-01,stuff,jp,これはこれはどういう意味なんだろう
+#Linguistics,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
+#Linguistics,yo,happy-times,zh,辣妹
+#EOF
 #}
 
 build_rust() {
@@ -173,47 +161,27 @@ build_rust() {
     && cp "target/release/${BLOG_API}" ./
 }
 
+#@TODO add verbose option
 compile_blog() {
   if "${FORCE}" || [ ! -e "${BLOG_OUTPUT}" ]
-    then full_rebulid='true'
-    else full_rebuild='false'
+    then _force_option='--force'
+    else _force_option=''
   fi
   mkdir -p "${CACHE}" "${BLOG_OUTPUT}"
-
-  tags_cache=''
-  link_cache=''
-  compile_error='0'
-  for file in "${PUBLISHED}"/*; do
-    name="${file##*/}"
-    extn="${name##*.}"
-    name="${file%."${extn}"}"
-
-    output="$( compile_post "${file}" )" || { compile_error="$?"; break; }
-    # The format is
-    # - number link-cache lines (this is the number of following entries)
-    # - link-cache line
-    # - second tag-cache line (if more than one lang)
-    if [ "${compile_error}" = 0 ]; then
-      num="${output%%${NL}*}"
-      output="${output#"${num}${NL}"}"
-      
-      # Separate the link-cache lines from the tag-cache lines
-      while [ "${num}" -gt 0 ]; do
-        line="${output%%${NL}*}"
-        output="${output#*${NL}}"
-        link_cache="${link_cache}${line}${NL}"
-        num="$(( num - 1 ))"
-      done
-      tags_cache="${tags_cache}${output}${NL}"
-    fi
-  done
-
-  if [ "${compile_error}" = 0 ]; then
-    errln "Updating link cache '${LINK_CACHE}'"
-    outln "${link_cache}" | sort | sed '/^$/d' >"${LINK_CACHE}"
-    errln "Updating tags cache '${TAGS_CACHE}'"
-    outln "${tags_cache}" | sort | sed '/^$/d' >"${TAGS_CACHE}"
-
+  if "${BLOG_API}" compile \
+    "${PUBLISHED}" \
+    \
+    --api-dir "${FILE_EXT_API}" \
+    --blog-relative "${BLOG_RELATIVE}" \
+    --cache-dir "${CACHE}" \
+    --domain "${DOMAIN}" \
+    --linker "${SITE_TEMPLATES}/post.sh" \
+    --output-format "${POST_OUTPUT}" \
+    --public-dir "${PUBLIC}" \
+    --templates-dir "${SITE_TEMPLATES}" \
+    ${_force_option} \
+  # end
+  then
     export LANG_LIST="$( <"${TAGS_CACHE}" cut -d ',' -f 4 | sort | uniq )"
 
     index_output="${BLOG_OUTPUT}/index.html"
@@ -233,64 +201,9 @@ compile_blog() {
             "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" )" \
         >"${tags_output}" || exit "$?"
     done
-  else
-    exit "${compile_error}"
   fi
 
 }
-
-#@TODO add verbose option
-compile_blog2() {
-  if "${FORCE}" || [ ! -e "${BLOG_OUTPUT}" ]
-    then _force_option='--force'
-    else _force_option=''
-  fi
-  mkdir -p "${CACHE}" "${BLOG_OUTPUT}"
-  "${BLOG_API}" compile \
-    "${PUBLISHED}" \
-    \
-    --api-dir "${FILE_EXT_API}" \
-    --blog-relative "${BLOG_RELATIVE}" \
-    --cache-dir "${CACHE}" \
-    --domain "${DOMAIN}" \
-    --linker "${SITE_TEMPLATES}/post.sh" \
-    --output-format "${POST_OUTPUT}" \
-    --public-dir "${PUBLIC}" \
-    --templates-dir "${SITE_TEMPLATES}" \
-    ${_force_option} \
-  # end
-}
-
-#backup_tags() {
-#  if [ -f "${TAGS_CACHE}" ]; then
-#    mv TAGS_BACKUP
-#  sed
-#}
-
-compile_post() {
-  # $1: path to the post to compile
-  #cargo run compile-markup "${1}" "${SITE_TEMPLATES}/post.sh" \
-  if "${FORCE}"
-    then _force_option="--force"
-    else _force_option=""
-  fi
-  "${BLOG_API}" compile-markup \
-    "${1}" \
-    \
-    --api-dir "${FILE_EXT_API}" \
-    --blog-relative "${BLOG_RELATIVE}" \
-    --cache-dir "${CACHE}" \
-    --domain "${DOMAIN}" \
-    --linker "${SITE_TEMPLATES}/post.sh" \
-    --output-format "${POST_OUTPUT}" \
-    --public-dir "${PUBLIC}" \
-    --templates-dir "${SITE_TEMPLATES}" \
-    ${_force_option} \
-  # end
-
-}
-
-
 
 #run: sh % build-rust test
 update() {
