@@ -27,17 +27,17 @@ pub enum Value<'a> {
 const KEY_BLACKLIST: [&str; 5] = ["file_stem", "lang", "year", "month", "day"];
 
 #[derive(Debug)]
-pub struct Frontmatter<'a> {
+pub struct Frontmatter<'frontmatter_string> {
     // This instead of two vec's as key and value lengths must be the same
-    keys: Vec<&'a str>,
-    values: Vec<Value<'a>>,
-    tags: Vec<&'a str>,
+    keys: Vec<&'frontmatter_string str>,
+    values: Vec<Value<'frontmatter_string>>,
+    tags: Vec<&'frontmatter_string str>,
 }
 
 // @TODO: Maybe change use a proper JSON parser?
-impl<'a> Frontmatter<'a> {
+impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
     pub fn new(
-        frontmatter: &'a str,
+        frontmatter: &'frontmatter_string str,
         created: DateTime<Utc>,
         modified: DateTime<Utc>,
     ) -> Result<Self, ParseError> {
@@ -116,13 +116,13 @@ impl<'a> Frontmatter<'a> {
     }
 
     // Emulate hashmap lookup with a Vec<(_, _)>
-    pub fn lookup(&'a self, key: &str) -> Option<&'a Value<'a>> {
+    pub fn lookup<'a>(&'a self, key: &str) -> Option<&'a Value<'frontmatter_string>> {
         let i = self.keys.iter().position(|k| k == &key)?;
         Some(&self.values[i])
     }
 
     #[inline]
-    fn pad_two<'b>(num: u32) -> Cow<'b, str> {
+    fn pad_two<'a>(num: u32) -> Cow<'a, str> {
         let mut padded = String::with_capacity('0'.len_utf8() * 2);
         let tens = num / 10;
         let ones = num % 10;

@@ -67,6 +67,9 @@ macro_rules! define_config {
         @to_be_required {
             $($r_short:literal $r_long:literal $r_id:ident,)*
         }
+        @derived {
+            $($d_id:ident = [$d_from:ident, $d_add:literal],)*
+        }
     ) => {
         #[derive(Debug)]
         pub struct Config {
@@ -109,6 +112,7 @@ macro_rules! define_config {
         pub struct RequiredConfigs<'a> {
             $($o_id: $o_type,)*
             $($r_id: &'a str,)*
+            $($d_id: String,)*
         }
         impl<'a> RequiredConfigs<'a> {
             fn unwrap(config: &'a Config) -> Self {
@@ -119,6 +123,7 @@ macro_rules! define_config {
                         .or_die(1)
                         .as_str(),
                     )*
+                    $($d_id: [config.$d_from.as_ref().unwrap(), $d_add].join(""),)*
                 }
             }
         }
@@ -141,8 +146,15 @@ define_config! {
         "b" "blog-relative" blog_relative, // blog directory inside of public_dir
         "c" "cache-dir"     cache_dir,
         "d" "domain"        domain,        // public dir as a URL
+        "l" "linker"        linker,
+        "o" "output-format" output_format,
         "p" "public-dir"    public_dir,    // public dir as a path
         "t" "templates-dir" templates_dir,
+    }
+    @derived {
+        tags_cache = [cache_dir, "/tags.csv"],
+        link_cache = [cache_dir, "/link.csv"],
+        changelog  = [cache_dir, "/changelog.csv"],
     }
 }
 
@@ -166,24 +178,20 @@ fn main() {
             sync_last_updated(args.get(1).unwrap(), args.get(2).unwrap());
         }
 
-        4, "compile-markup" => {
+        2, "compile-markup" => {
             let source = args.get(1).unwrap();
-            let linker_loc = args.get(2).unwrap();
-            let output_template = args.get(3).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
-            compile(&unwrapped_config, &source, &linker_loc, &output_template);
+            let linker_loc = &unwrapped_config.linker;
+            let output_template = &unwrapped_config.output_format;
+            compile(&unwrapped_config, &source, linker_loc, output_template);
         }
 
-        6, "compile" => {
+        2, "compile" => {
             let published_dir = args.get(1).unwrap();
-            let linker_loc = args.get(2).unwrap();
-            let output_template = args.get(3).unwrap();
-            let tags_cache_loc = args.get(4).unwrap();
-            let link_cache_loc = args.get(5).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
             let input_list = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
 
-            compile2(&unwrapped_config, input_list.as_slice(), linker_loc.as_str(), output_template.as_str(), tags_cache_loc.as_str(), link_cache_loc.as_str());
+            compile2(&unwrapped_config, input_list.as_slice());
         }
     });
 }

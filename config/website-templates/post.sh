@@ -37,7 +37,6 @@ title:平聲入去四聲是什麼：上古、中古、和現代的聲調演變
 set -- \
   "domain:"~/interim/b/public \
   "language:zh" \
-  "local_make_dir:config/make" \
   "local_templates_dir:config/templates" \
   "local_toc_path:.blog/toc/zh/chinese_tones.html" \
   "local_doc_path:.blog/doc/zh/chinese_tones.html" \

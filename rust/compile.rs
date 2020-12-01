@@ -115,144 +115,176 @@ fn read_file(path: &Path) -> Result<String, String> {
 pub fn compile2(
     config: &RequiredConfigs,
     input_list: &[PathBuf],
-    _linker_loc: &str,
-    _output_template: &str,
-    _tags_cache_loc: &str,
-    _link_cache_loc: &str,
 ) {
     let file_count = input_list.len();
     let mut input_paths = Vec::with_capacity(file_count);
     for x in input_list {
         input_paths.push_and_check(PathWrapper::wrap(x).or_die(1));
     }
-    //let mtime_db_loc = [config.cache_dir, "/mtimes.csv"].join("");
-    let mtime_db_loc = "rust/test.csv".to_string();
-    let log_result = read_file(Path::new(mtime_db_loc.as_str()));
-    let log_str = log_result.as_ref().map(String::as_str).unwrap_or("");
-    let log = UpdateTimes::new(log_str)
-        .map_err(|err| err.with_filename(Cow::Borrowed(&mtime_db_loc)))
-        .or_die(1);
 
-    //let shared = Vec::with_capacity(file_count * 3);
     let mut text_list = Vec::with_capacity(file_count);
     for path in &input_paths {
         text_list.push_and_check(read_file(path.path).or_die(1));
     }
-    let (shared_metadata, post_list, lang_list, api_and_comment) =
-        MetadataCache::new(config, &text_list, &input_paths);
+    let (shared_metadata, api_and_comment, post_list, lang_list) =
+        analyse_metadata(config, &text_list, &input_paths);
+    htmlify_into_partials(
+        config,
+        &input_paths,
+        &shared_metadata,
+        api_and_comment,
+        post_list,
+    );
+    // We can drop 'text_list' and 'api_and_comment' here
+    join_partials(
+        config,
+        &input_paths,
+        &shared_metadata,
+        &lang_list,
+    );
+}
 
+// HTMLify the post (i.e. run through asciidoctor, etc.)
+// Also splits the table of contents (toc) and the body (doc)
+fn htmlify_into_partials(
+    config: &RequiredConfigs,
+    input_list: &[PathWrapper],
+    shared_metadata: &MetadataCache,
+    api_and_comment: ApiAndComment,
+    post_list: Vec<Post>, // Eat this
+) {
+    debug_assert_eq!(input_list.len(), post_list.len());
 
-    // HTMLify the post (i.e. run through asciidoctor, etc.)
-    // Also splits the table of contents (toc) and the body (doc)
-    shared_metadata.0.iter()
-        .filter(|view_data| log.check_if_outdated(&input_paths[view_data.path_index]))
-        .for_each(|view_data|  {
-            let i = view_data.path_index;
+    let log_result = read_file(Path::new(&config.changelog));
+    let log_str = log_result.as_ref().map(String::as_str).unwrap_or("");
+    let log = UpdateTimes::new(log_str)
+        .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
+        .or_die(1);
+
+    // Because we flatten post views, using cursor to
+    let mut cursor = 1;
+    debug_assert_ne!(cursor, 0);
+    let mut buffer = String::new();
+
+    for view_data in shared_metadata {
+        let i = view_data.path_index;
+        let path = &input_list[i];
+        let new_post = cursor != i;
+        if new_post {
+            cursor = i;
+            buffer.clear();
+            // @TODO implement non-allocating escape
+            buffer.push('"');
+            buffer.push_str(path.stem);
+            buffer.push('.');
+            buffer.push_str(path.extension);
+            buffer.push('"');
+        }
+
+        if log.check_if_outdated(path) {
             let toc_loc = view_data.toc_loc.as_str();
             let doc_loc = view_data.doc_loc.as_str();
-            let (api, _) = api_and_comment.get(&input_paths[i].stem).unwrap();
+            let (api, _) = api_and_comment.get(path.extension).unwrap();
             let view = &post_list[i].views[view_data.view_index];
 
             // @TODO: Create directories in building api cache (less work)
             create_parent_dir(toc_loc).or_die(1);
             create_parent_dir(doc_loc).or_die(1);
-            api.compile(view.body.as_slice(), toc_loc, doc_loc).or_die(1);
-            println!("Suc")
-        });
-    // We can drop 'text_list' and 'api_and_comment' here
+            api.compile(view.body.as_slice(), toc_loc, doc_loc)
+                .or_die(1);
 
-    // Join the post
-    //link()
-
-    //post.views.iter().enumerate().for_each(|(i, view)| {
-    //    let (lang, toc_loc, doc_loc) = &metadata[i];
-    //    eprintln!(
-    //        "compiling {} {} and {}",
-    //        lang,
-    //        toc_loc.escape(),
-    //        doc_loc.escape()
-    //    );
-    //    create_parent_dir(toc_loc).or_die(1);
-    //    create_parent_dir(doc_loc).or_die(1);
-    //    api.compile(view.body.as_slice(), toc_loc, doc_loc)
-    //        .or_die(1);
-    //});
+            if config.verbose {
+                eprintln!("Compiling {} to", buffer);
+                eprintln!("- {}", toc_loc.escape());
+                eprintln!("- {}", doc_loc.escape());
+            } else {
+                //if new_post {
+                eprintln!("Compiling {}", buffer);
+            }
+        } else {
+            //"Skipping finished {} (use --force to not skip)",
+            //eprint!("Compiling {} to ");
+            eprintln!("Skipping compiling {}", buffer);
+        }
+    }
 }
 
 // Using this so that we can discard 'api_and_comment' and 'text_list'
 // before the linker step
-struct MetadataCache(Vec<ViewMetadata2>);
-impl MetadataCache {
-    fn new<'config, 'text, 'path>(
-        config: &'config RequiredConfigs,
-        text_list: &'text [String],
-        input_paths: &[PathWrapper<'path>],
-    ) -> (Self, Vec<Post<'text>>, Vec<String>,
-    HashMap<&'path str, (FileApi<'config>, String)>
+type MetadataCache = Vec<ViewMetadata2>;
+type ApiAndComment<'path, 'config> = HashMap<&'path str, (FileApi<'config>, String)>;
+fn analyse_metadata<'config, 'text, 'path>(
+    config: &'config RequiredConfigs,
+    text_list: &'text [String],
+    input_paths: &[PathWrapper<'path>],
+) -> (
+    MetadataCache,
+    ApiAndComment<'path, 'config>,
+    Vec<Post<'text>>,
+    Vec<String>,
 ) {
-        debug_assert_eq!(text_list.len(), input_paths.len());
+    debug_assert_eq!(text_list.len(), input_paths.len());
 
-        let len = input_paths.len();
+    let len = input_paths.len();
 
-        // Two-part builder, 'api_and_comment' is shared between both
-        // Bulid 'post_list'
-        let mut api_and_comment = HashMap::new();
-        let mut post_list = Vec::with_capacity(len);
-        let mut views_count = 0;
-        for i in 0..len {
-            let extension = input_paths[i].extension;
-            if !api_and_comment.contains_key(extension) {
-                let api = FileApi::from_filename(
-                    config.api_dir,
-                    extension,
-                    (config.domain, config.blog_relative),
-                )
-                .or_die(1);
-                let comment = api.comment().or_die(1);
-                api_and_comment.insert(extension, (api, comment));
-            }
-            let (_, comment) = api_and_comment.get(extension).unwrap();
-            let post = Post::new(&text_list[i], comment.as_str()).or_die(1);
-
-            views_count += post.views.len();
-            post_list.push_and_check(post);
+    // Two-part builder, 'api_and_comment' is shared between both
+    // Bulid 'post_list'
+    let mut api_and_comment = HashMap::new();
+    let mut post_list = Vec::with_capacity(len);
+    let mut views_count = 0;
+    for i in 0..len {
+        let extension = input_paths[i].extension;
+        if !api_and_comment.contains_key(extension) {
+            let api = FileApi::from_filename(
+                config.api_dir,
+                extension,
+                (config.domain, config.blog_relative),
+            )
+            .or_die(1);
+            let comment = api.comment().or_die(1);
+            api_and_comment.insert(extension, (api, comment));
         }
+        let (_, comment) = api_and_comment.get(extension).unwrap();
+        let post = Post::new(&text_list[i], comment.as_str()).or_die(1);
 
-        // Build 'shared_metadata' (frontmatter)
-        // This is independent of 'text_list' lifetime
-        // Also
-        let mut shared_metadata = Vec::with_capacity(views_count);
-        let mut lang_list = Vec::with_capacity(len);
-        for i in 0..len {
-            let path = &input_paths[i];
-            let (api, _) = api_and_comment.get(path.extension).unwrap();
-            let lang_list_string = post_list[i].lang_list.join(" ");
-
-            let mut from = 0;
-            for (j, view) in post_list[i].views.iter().enumerate() {
-                let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
-                let lang_str = view.lang.unwrap_or("");
-                let lang_range = from..from + lang_str.len();
-                debug_assert_eq!(lang_str, &lang_list_string[lang_range.clone()]);
-
-                shared_metadata.push_and_check(ViewMetadata2 {
-                    path_index: i,
-                    view_index: j,
-                    frontmatter_string,
-                    lang: lang_range,
-                    toc_loc: [config.cache_dir, "/toc/", lang_str, "/", path.stem, ".html"]
-                        .join(""),
-                    doc_loc: [config.cache_dir, "/doc/", lang_str, "/", path.stem, ".html"]
-                        .join(""),
-                });
-
-                from += lang_str.len() + ' '.len_utf8();
-            }
-            lang_list.push_and_check(lang_list_string);
-        }
-
-        (Self(shared_metadata), post_list, lang_list, api_and_comment)
+        views_count += post.views.len();
+        post_list.push_and_check(post);
     }
+
+    // Build 'shared_metadata' (frontmatter)
+    // This is independent of 'text_list' lifetime
+    // Also
+    let mut shared_metadata = Vec::with_capacity(views_count);
+    let mut lang_list = Vec::with_capacity(len);
+    for i in 0..len {
+        let path = &input_paths[i];
+        let (api, _) = api_and_comment.get(path.extension).unwrap();
+        let lang_list_string = post_list[i].lang_list.join(" ");
+
+        let mut from = 0;
+        for (j, view) in post_list[i].views.iter().enumerate() {
+            let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
+            let lang_str = view.lang.unwrap_or("");
+            let lang_range = from..from + lang_str.len();
+            // @TODO debug assert this
+            assert_eq!(lang_str, &lang_list_string[lang_range.clone()]);
+
+            shared_metadata.push_and_check(ViewMetadata2 {
+                path_index: i,
+                view_index: j,
+                frontmatter_string,
+                post_lang_count: post_list[i].lang_list.len(),
+                lang: lang_range,
+                toc_loc: [config.cache_dir, "/toc/", lang_str, "/", path.stem, ".html"].join(""),
+                doc_loc: [config.cache_dir, "/doc/", lang_str, "/", path.stem, ".html"].join(""),
+            });
+
+            from += lang_str.len() + ' '.len_utf8();
+        }
+        lang_list.push_and_check(lang_list_string);
+    }
+
+    (shared_metadata, api_and_comment, post_list, lang_list)
 }
 
 #[derive(Debug)]
@@ -261,39 +293,9 @@ struct ViewMetadata2 {
     view_index: usize,
     frontmatter_string: String,
     lang: std::ops::Range<usize>,
+    post_lang_count: usize,
     toc_loc: String,
     doc_loc: String,
-}
-
-#[derive(Debug)]
-struct CompileMetadata<'config, 'path, 'post> {
-    api: FileApi<'config>,
-    input: PathWrapper<'path>,
-    post: Post<'post>,
-}
-
-//#[derive(Debug)]
-struct SharedMetadata<'owned> {
-    lang: &'owned str,
-    toc_loc: String,
-    doc_loc: String,
-    frontmatter: Frontmatter<'owned>,
-}
-
-fn validate() {
-    //let path_obj = PathWrapper::wrap(path).or_die(1);
-    //let api = FileApi::from_filename(
-    //    config.api_dir,
-    //    path_obj.extension,
-    //    (config.domain, config.blog_relative),
-    //)
-    //.or_die(1);
-    //let comment_marker = api.comment().or_die(1);
-    //let post = Post::new(text, comment_marker.as_str())
-    //    .map_err(|err| err.with_filename(path.to_string_lossy().to_string()))
-    //    .or_die(1);
-    //CompileMetdata {
-    //}
 }
 
 // run: cargo test compile -- --nocapture
@@ -338,7 +340,7 @@ impl<'log> UpdateTimes<'log> {
         self.0
             .get(id.stem)
             .map(|log| &id.updated > log)
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
 }
 
@@ -528,6 +530,178 @@ fn combine_sections_into_views(
             eprintln!("{}", linker_stdout);
         }
     });
+}
+
+#[derive(Debug)]
+struct LinkerViewMetadata<'lang_group_list, 'frontmatter_string> {
+    frontmatter_serialised: String,
+    tags_cache: String,
+    lang: &'lang_group_list str,
+    relative_output_loc: String,
+    title: &'frontmatter_string str,
+    other_langs: (&'lang_group_list str, &'lang_group_list str),
+}
+fn join_partials(
+    config: &RequiredConfigs,
+    input_list: &[PathWrapper],
+    shared_metadata: &MetadataCache,
+    lang_group_list: &[String],
+) {
+    debug_assert_eq!(input_list.len(), lang_group_list.len());
+
+    // Each view must know about its parent's other views to link to them
+    // So first render the links into 'view_links'
+    let view_count = shared_metadata.len();
+    let mut linker_metadata = Vec::with_capacity(view_count);
+    for view_data in shared_metadata {
+        let i = view_data.path_index;
+        let path = &input_list[i];
+        let frontmatter = Frontmatter::new(
+            view_data.frontmatter_string.as_str(),
+            path.created,
+            path.updated,
+        )
+        .map_err(|err| err.with_filename(path.path.to_string_lossy()))
+        .or_die(1);
+        let lang = &lang_group_list[i][view_data.lang.clone()];
+
+        linker_metadata.push_and_check(LinkerViewMetadata {
+            frontmatter_serialised: frontmatter.serialise(),
+            tags_cache: frontmatter.format_to_tag_cache(path.stem, lang),
+            lang,
+            relative_output_loc: frontmatter.format(config.output_format, path.stem, lang),
+            title: match frontmatter.lookup("title") {
+                Some(Value::Utf8(s)) => s,
+                _ => "",
+            },
+            other_langs: exclude(&lang_group_list[i], lang),
+        });
+    }
+
+    let mut cursor = 1;
+    debug_assert!(cursor != 0);
+    let mut post_data = &linker_metadata[..];
+    for i in 0..view_count {
+        let shared = &shared_metadata[i];
+        if cursor != shared.path_index {
+            cursor = shared.path_index;
+            post_data = &linker_metadata[i..i + shared.post_lang_count];
+        }
+        let my_data = &linker_metadata[i];
+        let (target, args) = fmt_linker_args(config, &shared_metadata[i], post_data, my_data);
+
+        let args = {
+            let mut borrow: Vec<&str> = Vec::with_capacity(args.len());
+            for entry in &args {
+                borrow.push_and_check(entry);
+            }
+            borrow
+        };
+
+        create_parent_dir(target.as_str()).or_die(1);
+        // @TODO If exists
+        // @TODO link cache
+        // @TODO tags cache
+        // @TODO series cache
+        print!("{}", command_run(
+            Path::new(config.linker),
+            (config.domain, config.blog_relative),
+            None,
+            &args,
+        ).or_die(1));
+
+        eprintln!("Linking {} {}", my_data.lang, target.escape());
+        if config.verbose {
+            eprint!("=== Arg 1: Frontmatter ====\n{}", &args[0]);
+            eprint!("=== Rest ===\n");
+            for line in &args[1..] {
+                eprint!("{}\n", line);
+            }
+            eprintln!();
+        }
+
+    }
+}
+
+macro_rules! build_with_counted_capacity {
+    (let mut $var:ident = $base:expr,
+        +
+        $($entry:expr,)*
+    ) => {
+        let capacity = $base + build_with_counted_capacity!(@count $($entry,)*);
+        let mut $var = Vec::with_capacity(capacity);
+        $($var.push_and_check($entry);)*
+    };
+    (@count) => { 0 };
+    (@count $entry:expr, $($tt:tt)*) => {
+        1 + build_with_counted_capacity!(@count $($tt)*);
+    };
+}
+
+// Mostly separate this for the white space
+fn fmt_linker_args<'frontmatter_string>(
+    config: &RequiredConfigs,
+    shared: &ViewMetadata2,
+    post_data: &[LinkerViewMetadata],
+    data: &'frontmatter_string LinkerViewMetadata<'_, 'frontmatter_string>,
+) -> (String, Vec<Cow<'frontmatter_string, str>>) {
+    let relative_target = data.relative_output_loc.as_str();
+    let local_target = [config.public_dir, "/", relative_target].join("");
+    let lang_count = shared.post_lang_count;
+    // ALL label is lang_count of 0, we want: min(0, lang_count - 1)
+    let other_lang_count = if lang_count > 0 {
+        lang_count - 1
+    } else {
+        0
+    };
+
+    // File metadata
+
+    // Counts the capacity for me and pushes
+    build_with_counted_capacity! {
+        let mut api_keyvals = other_lang_count,
+        +
+        // User data (specified within post) pushed as first arg
+        Cow::Borrowed(data.frontmatter_serialised.as_str()),
+
+        // Remaining args are the api-calculated metadata
+        Cow::Owned(["domain:", config.domain].join("")),
+        Cow::Owned(["language:", data.lang].join("")),
+        Cow::Owned(["local_templates_dir:", config.templates_dir].join("")),
+        Cow::Owned(["local_toc_path:", shared.toc_loc.as_str()].join("")),
+        Cow::Owned(["local_doc_path:", shared.doc_loc.as_str()].join("")),
+        Cow::Owned(["local_output_path:", local_target.as_str()].join("")),
+        Cow::Owned(["relative_output_url:", relative_target].join("")),
+        //Cow::Owned(["relative_tags_url:", data.tags_loc.as_str()].join("")),
+        Cow::Owned([
+            "other_view_langs:",
+            data.other_langs.0,
+            data.other_langs.1
+        ].join("")),
+    }
+
+    for i in 0..lang_count {
+        //println!("{:?}", shared.view_index, lang_count);
+        if i == shared.view_index {
+            continue;
+        }
+        api_keyvals.push_and_check(Cow::Owned([
+            "relative_",
+            post_data[i].lang,
+            "_view:",
+            post_data[i].relative_output_loc.as_str(),
+            //relative_target.as_str(),
+        ].join("")));
+    }
+    //api_keyvals.extend(
+    //    loc_metadata
+    //        .iter()
+    //        .filter(|x| x.lang != data.lang)
+    //        .map(|x| x.other_view_link.as_str()),
+    //);
+    //debug_assert_eq!(capacity, api_keyvals.len());
+
+    (local_target, api_keyvals)
 }
 
 // 'link_view_sections()' but for a single view

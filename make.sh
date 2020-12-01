@@ -138,7 +138,7 @@ main() {
       #build_rust
       #compile_post "${PUBLISHED}/blue.adoc"
       #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
-      compile_blog
+      compile_blog2
 
     ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
   esac; done
@@ -239,6 +239,28 @@ compile_blog() {
 
 }
 
+#@TODO add verbose option
+compile_blog2() {
+  if "${FORCE}" || [ ! -e "${BLOG_OUTPUT}" ]
+    then _force_option='--force'
+    else _force_option=''
+  fi
+  mkdir -p "${CACHE}" "${BLOG_OUTPUT}"
+  "${BLOG_API}" compile \
+    "${PUBLISHED}" \
+    \
+    --api-dir "${FILE_EXT_API}" \
+    --blog-relative "${BLOG_RELATIVE}" \
+    --cache-dir "${CACHE}" \
+    --domain "${DOMAIN}" \
+    --linker "${SITE_TEMPLATES}/post.sh" \
+    --output-format "${POST_OUTPUT}" \
+    --public-dir "${PUBLIC}" \
+    --templates-dir "${SITE_TEMPLATES}" \
+    ${_force_option} \
+  # end
+}
+
 #backup_tags() {
 #  if [ -f "${TAGS_CACHE}" ]; then
 #    mv TAGS_BACKUP
@@ -252,12 +274,15 @@ compile_post() {
     then _force_option="--force"
     else _force_option=""
   fi
-  "${BLOG_API}" compile-markup "${1}" "${SITE_TEMPLATES}/post.sh" \
-    "${POST_OUTPUT}" \
+  "${BLOG_API}" compile-markup \
+    "${1}" \
+    \
     --api-dir "${FILE_EXT_API}" \
     --blog-relative "${BLOG_RELATIVE}" \
     --cache-dir "${CACHE}" \
     --domain "${DOMAIN}" \
+    --linker "${SITE_TEMPLATES}/post.sh" \
+    --output-format "${POST_OUTPUT}" \
     --public-dir "${PUBLIC}" \
     --templates-dir "${SITE_TEMPLATES}" \
     ${_force_option} \
