@@ -1,6 +1,6 @@
 use crate::traits::{ShellEscape, VecExt};
-use std::fs;
-use std::path::Path;
+use chrono::{DateTime, TimeZone, Utc};
+use std::{fs, io, path::Path, time::SystemTime};
 
 // @TODO test on windows
 pub const TAG_BLACKLIST: [char; 4] = [
@@ -38,8 +38,9 @@ pub fn parse_tags_and_push<'a>(
                 " was already defined. Cannot have duplicates",
             ]
             .join(""));
-        } else { // if !fail_on_duplicates
-             tags_added.push_and_check(tag);
+        } else {
+            // if !fail_on_duplicates
+            tags_added.push_and_check(tag);
         }
     }
     Ok(tags_added)
@@ -55,6 +56,114 @@ pub fn program_name() -> String {
                 .to_string()
         })
         .unwrap_or_else(|_| "".to_string())
+}
+
+#[derive(Debug)]
+pub struct PathReadMetadata<'path> {
+    pub path: &'path Path,
+    pub stem: &'path str,
+    pub extension: &'path str,
+    pub created: DateTime<Utc>,
+    pub updated: DateTime<Utc>,
+}
+
+impl<'path> PathReadMetadata<'path> {
+    pub fn wrap(path: &'path Path) -> Result<Self, String> {
+        let stem_os = path.file_stem().ok_or_else(|| {
+            [
+                "The post path ",
+                path.to_string_lossy().escape().as_str(),
+                " does not is not a path to a file",
+            ]
+            .join("")
+        })?;
+        let ext_os = path.extension().ok_or_else(|| {
+            [
+                "The post ",
+                path.to_string_lossy().escape().as_str(),
+                " does not have a file extension",
+            ]
+            .join("")
+        })?;
+
+        let stem = stem_os.to_str().ok_or_else(|| {
+            [
+                "The stem ",
+                stem_os.to_string_lossy().escape().as_str(),
+                " in ",
+                path.to_string_lossy().escape().as_str(),
+                " contains invalid UTF8",
+            ]
+            .join("")
+        })?;
+        let extension = ext_os.to_str().ok_or_else(|| {
+            [
+                "The extension",
+                ext_os.to_string_lossy().escape().as_str(),
+                " in ",
+                path.to_string_lossy().escape().as_str(),
+                " contains invalid UTF8",
+            ]
+            .join("")
+        })?;
+
+        let meta = path.metadata().map_err(|err| {
+            [
+                "Cannot read metadata of ",
+                path.to_string_lossy().escape().as_str(),
+                ". ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })?;
+        let updated = to_datetime(meta.modified()).map_err(|(my_err, sys_err)| {
+            [
+                "The file created date of ",
+                path.to_string_lossy().escape().as_str(),
+                my_err,
+                ". ",
+                sys_err.as_str(),
+            ]
+            .join("")
+        })?;
+        let created = to_datetime(meta.created()).map_err(|(my_err, sys_err)| {
+            [
+                "The file last updated date metadata of ",
+                path.to_string_lossy().escape().as_str(),
+                my_err,
+                ". ",
+                sys_err.as_str(),
+            ]
+            .join("")
+        })?;
+
+        Ok(Self {
+            path,
+            stem,
+            extension,
+            created,
+            updated,
+        })
+    }
+}
+
+fn to_datetime(
+    time_result: io::Result<SystemTime>,
+) -> Result<DateTime<Utc>, (&'static str, String)> {
+    let system_time =
+        time_result.map_err(|err| (" is not supported on this filesystem. ", err.to_string()))?;
+    let time = system_time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|err| (" is before UNIX epoch. ", err.to_string()))?;
+    let secs = time.as_nanos() / 1_000_000_000;
+    let nano = time.as_nanos() % 1_000_000_000;
+    if secs > i64::MAX as u128 {
+        return Err((
+            " is too big and is not supported by the 'chrono' crate",
+            "".to_string(),
+        ));
+    }
+    Ok(Utc.timestamp(secs as i64, nano as u32))
 }
 
 pub fn create_parent_dir(location: &str) -> Result<(), String> {

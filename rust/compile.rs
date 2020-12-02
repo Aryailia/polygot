@@ -1,13 +1,11 @@
 // This brings the disparate parts together to do the compile pipeline.
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use std::borrow::Cow;
-use std::collections::HashMap;
 use std::{
+    borrow::Cow,
+    collections::HashMap,
     fs,
-    io::{self, Read},
-    ops::Range,
+    io::Read,
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 use super::RequiredConfigs;
@@ -15,7 +13,7 @@ use crate::{
     custom_errors::ParseError,
     fileapi::{command_run, FileApi},
     frontmatter::{Frontmatter, Value},
-    helpers::create_parent_dir,
+    helpers::{create_parent_dir, PathReadMetadata},
     post::Post,
     traits::{BoolExt, ResultExt, ShellEscape, VecExt},
 };
@@ -34,6 +32,8 @@ macro_rules! zip {
 //       changelog; that we do not need to read output file updated time
 // @TODO Add spacing between different compile steps, make a print vec function
 // @TODO Decide on 'filetime' or rust's metadata for 'PathReadMetadata'
+// @TODO delete file
+// @TODO rename file
 
 //run: ../../make.sh build-rust build
 // run: cargo test compile -- --nocapture
@@ -148,14 +148,13 @@ fn walk(shared_view_metadata: &MetadataCache) -> ViewMetadataWalker {
         file_index: 0,
         start: 0,
         close: 0,
-        iter: shared_view_metadata.iter()
+        iter: shared_view_metadata.iter(),
     }
 }
 
 impl<'a> Iterator for ViewMetadataWalker<'a> {
-
     // index, if new post subarray, post subarray, view metadata
-    type Item = (usize, usize, bool, Range<usize>, &'a ViewMetadata);
+    type Item = (usize, usize, bool, std::ops::Range<usize>, &'a ViewMetadata);
     fn next(&mut self) -> Option<Self::Item> {
         let metadata = self.iter.next()?;
         let index = self.index;
@@ -169,10 +168,15 @@ impl<'a> Iterator for ViewMetadataWalker<'a> {
             self.close = index + metadata.post_lang_count;
         }
 
-        Some((index, self.file_index - 1, is_cross_into_new_post, self.start..self.close, metadata))
+        Some((
+            index,
+            self.file_index - 1,
+            is_cross_into_new_post,
+            self.start..self.close,
+            metadata,
+        ))
     }
 }
-
 
 fn analyse_metadata<'config, 'text, 'path>(
     config: &'config RequiredConfigs,
@@ -228,8 +232,7 @@ fn analyse_metadata<'config, 'text, 'path>(
             let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
             let lang_str = view.lang.unwrap_or("");
             let lang_range = from..from + lang_str.len();
-            // @TODO debug assert this
-            assert_eq!(lang_str, &lang_list_string[lang_range.clone()]);
+            debug_assert_eq!(lang_str, &lang_list_string[lang_range.clone()]);
 
             shared_metadata.push_and_check(ViewMetadata {
                 view_index: j,
@@ -502,7 +505,7 @@ fn write_caches(
         link.sort_unstable();
         eprintln!("Saving link cache to {}", link_loc.escape());
         write_file(link_loc, link.join("\n").as_str()).or_die(1);
-        //eprintln!("{:#?}\n", link);
+    //eprintln!("{:#?}\n", link);
     } else {
         eprintln!("No change in posts detected, caches unmodified (use --force to override)");
     }
@@ -640,114 +643,6 @@ impl<'log> UpdateTimes<'log> {
         }
 
         write_file(loc, buffer.as_str())
-    }
-}
-
-fn to_datetime(
-    time_result: io::Result<SystemTime>,
-) -> Result<DateTime<Utc>, (&'static str, String)> {
-    let system_time =
-        time_result.map_err(|err| (" is not supported on this filesystem. ", err.to_string()))?;
-    let time = system_time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|err| (" is before UNIX epoch. ", err.to_string()))?;
-    let secs = time.as_nanos() / 1_000_000_000;
-    let nano = time.as_nanos() % 1_000_000_000;
-    if secs > i64::MAX as u128 {
-        return Err((
-            " is too big and is not supported by the 'chrono' crate",
-            "".to_string(),
-        ));
-    }
-    Ok(Utc.timestamp(secs as i64, nano as u32))
-}
-
-#[derive(Debug)]
-struct PathReadMetadata<'path> {
-    path: &'path Path,
-    stem: &'path str,
-    extension: &'path str,
-    created: DateTime<Utc>,
-    updated: DateTime<Utc>,
-}
-
-impl<'path> PathReadMetadata<'path> {
-    fn wrap(path: &'path Path) -> Result<Self, String> {
-        let stem_os = path.file_stem().ok_or_else(|| {
-            [
-                "The post path ",
-                path.to_string_lossy().escape().as_str(),
-                " does not is not a path to a file",
-            ]
-            .join("")
-        })?;
-        let ext_os = path.extension().ok_or_else(|| {
-            [
-                "The post ",
-                path.to_string_lossy().escape().as_str(),
-                " does not have a file extension",
-            ]
-            .join("")
-        })?;
-
-        let stem = stem_os.to_str().ok_or_else(|| {
-            [
-                "The stem ",
-                stem_os.to_string_lossy().escape().as_str(),
-                " in ",
-                path.to_string_lossy().escape().as_str(),
-                " contains invalid UTF8",
-            ]
-            .join("")
-        })?;
-        let extension = ext_os.to_str().ok_or_else(|| {
-            [
-                "The extension",
-                ext_os.to_string_lossy().escape().as_str(),
-                " in ",
-                path.to_string_lossy().escape().as_str(),
-                " contains invalid UTF8",
-            ]
-            .join("")
-        })?;
-
-        let meta = path.metadata().map_err(|err| {
-            [
-                "Cannot read metadata of ",
-                path.to_string_lossy().escape().as_str(),
-                ". ",
-                err.to_string().as_str(),
-            ]
-            .join("")
-        })?;
-        let updated = to_datetime(meta.modified()).map_err(|(my_err, sys_err)| {
-            [
-                "The file created date of ",
-                path.to_string_lossy().escape().as_str(),
-                my_err,
-                ". ",
-                sys_err.as_str(),
-            ]
-            .join("")
-        })?;
-        let created = to_datetime(meta.created()).map_err(|(my_err, sys_err)| {
-            [
-                "The file last updated date metadata of ",
-                path.to_string_lossy().escape().as_str(),
-                my_err,
-                ". ",
-                sys_err.as_str(),
-            ]
-            .join("")
-        })?;
-
-        Ok(Self {
-            path,
-            stem,
-            extension,
-            created,
-            updated,
-        })
     }
 }
 
