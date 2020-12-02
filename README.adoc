@@ -109,6 +109,8 @@ TODO: write this
 
 TODO: Review links
 
+* https://github.com/archivy/archivy
+* https://github.com/wincent/corpus
 - https://kristaps.bsd.lv/lowdown/
 - https://gitlab.com/uoou/blop/
 - https://github.com/henriqueleng/shite
