@@ -19,21 +19,22 @@ use crate::{
     traits::{BoolExt, ResultExt, ShellEscape, VecExt},
 };
 
-fn read_file(path: &Path, buffer: &mut String) -> Result<usize, String> {
-    fs::File::open(path)
-        .and_then(|mut file| file.read_to_string(buffer))
-        .map_err(|err| {
-            [
-                "Cannot read ",
-                path.to_string_lossy().escape().as_str(),
-                ". ",
-                err.to_string().as_str(),
-            ]
-            .join("")
-        })
-}
+// @TODO Create 'PathReadMetadata' from DirEntry walk
+// @TODO 'PathReadMetadata' move to helpers
+// @TODO Redo 'split_over'
+// @TODO explore implementing iterator compile.rs
+// @TODO remove println/eprintln replacing with writes to stdout/stderr
+// @TODO check if we can get away with just using Utc::now() for updating
+//       changelog; that we do not need to read output file updated time
+// @TODO Add spacing between different compile steps, make a print vec function
 
-//run: ../make.sh build-rust test
+//run: ../../make.sh build-rust build
+// run: cargo test compile -- --nocapture
+
+// A three-major-step build procees
+// 1. Analyse the metadata, process my custom markup
+// 2. Run the markup's compiler (markup->HTML) (Asciidoctor, org, Pandoc, etc.)
+// 3. Verify frontmatter, update the caches, then run the linker
 pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
@@ -41,17 +42,35 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
     // - one views <> one toc and one body (one post <> lang_num * 2 sections)
     // - one view <> one linked output file
 
-    // C analogy: read the meta source file
+    // @TODO Handle this in main.rs
     let file_count = input_list.len();
     let mut id_map = HashMap::with_capacity(file_count);
     let mut input_paths = Vec::with_capacity(file_count);
     for x in input_list {
-        let path = PathWrapper::wrap(x).or_die(1);
+        let path = PathReadMetadata::wrap(x).or_die(1);
         id_map.insert(path.stem, ());
         input_paths.push_and_check(path);
     }
 
-    // C analogy: "parse" into views and metadata
+    // Read the changelog to see if posts is outdated
+    // Update the changelog only after htmlify and frontmatter is verified
+    let mut log_result = String::new();
+    let log_str = read_file(Path::new(&config.changelog), &mut log_result)
+        .map(|_| log_result.as_str())
+        .unwrap_or("");
+    let mut changelog = UpdateTimes::new(log_str)
+        .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
+        .or_die(1);
+
+    // Parse into post_list, and extract relevant
+    // This data is split as so to manage ownership and lifetimes
+    // - 'shared_metadata' is for 'htmlify_into_partials' and  'join_partials'
+    //   - each will then compute the relevant borrowed data
+    // - 'post_list' borrows from 'text_list'
+    //
+    //  I separate out 'api_and_comment', 'post_list', and 'text_list'
+    //  as only 'htmlify_into_partials' needs them so they could be dropped
+    //  at 'join_partials'
     let mut text_list = Vec::with_capacity(file_count);
     for path in &input_paths {
         let mut text = String::new();
@@ -59,74 +78,48 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
         text_list.push_and_check(text);
     }
     let (shared_metadata, api_and_comment, post_list, lang_list) =
-        analyse_metadata(config, &text_list, &input_paths);
+        analyse_metadata(config, &text_list, &changelog, &input_paths);
 
-    // C analogy: "compile" each view into even more sections ("obj")
-    //            "compiling" done by external command (like Asciidoctor)
+    // Run the markup compiler
+    //
     // Though I probably should do the frontmatter validation before
-    // writing to files in 'htmlify_into_partials', but decided against it.
+    // writing to files in 'htmlify_into_partials', but decided against it
+    // because it makes the lifetime dependency graph complicated
     htmlify_into_partials(
         config,
         &input_paths,
+        &mut changelog,
         &shared_metadata,
         api_and_comment,
         post_list,
     );
     // We can drop 'text_list' and 'api_and_comment' here
 
-    // C analogy: "link" sections to one html per view (many "executables")
-    // We read the frontmatter here, which does some validation on the file
-    // but I decided it made the lifetime dependency graph too complicated
-    join_partials(config, id_map, &input_paths, &shared_metadata, &lang_list);
+    // Link/Join the partials into the final output
+    // Frontmatter's lifetime depends on 'shared_metadata'
+    join_partials(
+        config,
+        id_map,
+        &input_paths,
+        &changelog,
+        &shared_metadata,
+        &lang_list,
+    );
 }
 
 /******************************************************************************/
-// Parse the custom markup
+// Parse the custom markup and metadata
 
 #[derive(Debug)]
 struct ViewMetadata {
     path_index: usize,
     view_index: usize,
+    is_outdated: bool,
     frontmatter_string: String,
     lang: std::ops::Range<usize>,
     post_lang_count: usize,
     toc_loc: String,
     doc_loc: String,
-}
-
-#[derive(Debug)]
-struct UpdateTimes<'log>(HashMap<&'log str, DateTime<Utc>>);
-impl<'log> UpdateTimes<'log> {
-    fn new(log_str: &'log str) -> Result<Self, ParseError> {
-        let mut log = HashMap::with_capacity(log_str.lines().count());
-        //eprintln!("{:?}", log_str.lines().collect::<Vec<_>>());
-        for (i, line) in log_str.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
-            // @TODO push_and_check for hash
-            let (id, timestr) = line
-                .rfind(',')
-                .map(|delim_index| line.split_at(delim_index))
-                .ok_or_else(|| -> ParseError {
-                    (
-                        i + 1,
-                        line,
-                        Cow::Borrowed("Missing a second column (comma-separated)."),
-                    )
-                        .into()
-                })?;
-            eprintln!("{:?} {:?}", id, timestr);
-            let timestamp = NaiveDateTime::parse_from_str(&timestr[','.len_utf8()..], "%s")
-                .map_err(|err| ParseError::from((i + 1, line, Cow::Owned(err.to_string()))))?;
-            log.insert(id, Utc.from_utc_datetime(&timestamp));
-        }
-        Ok(Self(log))
-    }
-
-    fn check_if_outdated(&self, id: &PathWrapper) -> bool {
-        self.0
-            .get(id.stem)
-            .map(|log| &id.updated > log)
-            .unwrap_or(true)
-    }
 }
 
 // Using this so that we can discard 'api_and_comment' and 'text_list'
@@ -136,7 +129,8 @@ type ApiAndComment<'path, 'config> = HashMap<&'path str, (FileApi<'config>, Stri
 fn analyse_metadata<'config, 'text, 'path>(
     config: &'config RequiredConfigs,
     text_list: &'text [String],
-    input_paths: &[PathWrapper<'path>],
+    changelog: &UpdateTimes,
+    input_paths: &[PathReadMetadata<'path>],
 ) -> (
     MetadataCache,
     ApiAndComment<'path, 'config>,
@@ -153,7 +147,8 @@ fn analyse_metadata<'config, 'text, 'path>(
     let mut post_list = Vec::with_capacity(len);
     let mut views_count = 0;
     for i in 0..len {
-        let extension = input_paths[i].extension;
+        let path = &input_paths[i];
+        let extension = path.extension;
         if !api_and_comment.contains_key(extension) {
             let api = FileApi::from_filename(
                 config.api_dir,
@@ -165,7 +160,9 @@ fn analyse_metadata<'config, 'text, 'path>(
             api_and_comment.insert(extension, (api, comment));
         }
         let (_, comment) = api_and_comment.get(extension).unwrap();
-        let post = Post::new(&text_list[i], comment.as_str()).or_die(1);
+        let post = Post::new(&text_list[i], comment.as_str())
+            .map_err(|err| err.with_filename(path.path.to_string_lossy()))
+            .or_die(1);
 
         views_count += post.views.len();
         post_list.push_and_check(post);
@@ -173,7 +170,6 @@ fn analyse_metadata<'config, 'text, 'path>(
 
     // Build 'shared_metadata' (frontmatter)
     // This is independent of 'text_list' lifetime
-    // Also
     let mut shared_metadata = Vec::with_capacity(views_count);
     let mut lang_list = Vec::with_capacity(len);
     for i in 0..len {
@@ -192,6 +188,7 @@ fn analyse_metadata<'config, 'text, 'path>(
             shared_metadata.push_and_check(ViewMetadata {
                 path_index: i,
                 view_index: j,
+                is_outdated: changelog.check_if_outdated(path),
                 frontmatter_string,
                 post_lang_count: post_list[i].lang_list.len(),
                 lang: lang_range,
@@ -208,24 +205,19 @@ fn analyse_metadata<'config, 'text, 'path>(
 }
 
 /******************************************************************************/
+// Compile step
 // HTMLify the post (i.e. run through asciidoctor, etc.)
 // Also splits the table of contents (toc) and the body (doc)
-fn htmlify_into_partials(
+
+fn htmlify_into_partials<'input>(
     config: &RequiredConfigs,
-    input_list: &[PathWrapper],
+    input_list: &[PathReadMetadata<'input>],
+    changelog: &mut UpdateTimes<'input>,
     shared_metadata: &MetadataCache,
     api_and_comment: ApiAndComment,
     post_list: Vec<Post>, // Eat this
 ) {
     debug_assert_eq!(input_list.len(), post_list.len());
-
-    let mut log_result = String::new();
-    let log_str = read_file(Path::new(&config.changelog), &mut log_result)
-        .map(|_| log_result.as_str())
-        .unwrap_or("");
-    let log = UpdateTimes::new(log_str)
-        .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
-        .or_die(1);
 
     // Because we flatten post views, using cursor to
     let mut cursor = 1;
@@ -235,8 +227,8 @@ fn htmlify_into_partials(
     for view_data in shared_metadata {
         let i = view_data.path_index;
         let path = &input_list[i];
-        let new_post = cursor != i;
-        if new_post {
+        let is_new_post = cursor != i;
+        if is_new_post {
             cursor = i;
             buffer.clear();
             // @TODO implement non-allocating escape
@@ -247,9 +239,10 @@ fn htmlify_into_partials(
             buffer.push('"');
         }
 
-        if log.check_if_outdated(path) {
-            let toc_loc = view_data.toc_loc.as_str();
-            let doc_loc = view_data.doc_loc.as_str();
+        let toc_loc = view_data.toc_loc.as_str();
+        let doc_loc = view_data.doc_loc.as_str();
+
+        if view_data.is_outdated || !Path::new(toc_loc).exists() || !Path::new(doc_loc).exists() {
             let (api, _) = api_and_comment.get(path.extension).unwrap();
             let view = &post_list[i].views[view_data.view_index];
 
@@ -259,15 +252,16 @@ fn htmlify_into_partials(
             api.compile(view.body.as_slice(), toc_loc, doc_loc)
                 .or_die(1);
 
+            changelog.update(path);
+
             if config.verbose {
                 eprintln!("Compiling {} to", buffer);
                 eprintln!("- {}", toc_loc.escape());
                 eprintln!("- {}", doc_loc.escape());
-            } else {
-                //if new_post {
+            } else if is_new_post {
                 eprintln!("Compiling {}", buffer);
             }
-        } else {
+        } else if is_new_post {
             //"Skipping finished {} (use --force to not skip)",
             //eprint!("Compiling {} to ");
             eprintln!("Skipping compiling {}", buffer);
@@ -276,7 +270,9 @@ fn htmlify_into_partials(
 }
 
 /******************************************************************************/
+// Link phase
 // For each view, join the disparate sections into the final product
+
 #[derive(Debug)]
 struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
     id: &'shared str,
@@ -291,7 +287,8 @@ struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
 fn join_partials(
     config: &RequiredConfigs,
     id_map: HashMap<&str, ()>,
-    input_list: &[PathWrapper],
+    input_list: &[PathReadMetadata],
+    changelog: &UpdateTimes,
     shared_metadata: &MetadataCache,
     lang_group_list: &[String],
 ) {
@@ -328,7 +325,13 @@ fn join_partials(
     }
 
     // Must update the cache before linking as linker uses this info
-    write_caches(config, id_map, &linker_metadata);
+    write_caches(
+        config,
+        id_map,
+        &shared_metadata,
+        changelog,
+        &linker_metadata,
+    );
 
     // Format hello
     // @TODO these should both be sorted
@@ -338,47 +341,78 @@ fn join_partials(
     //    .chain()
 
     // Run the linker to join the partials (toc and doc)
+    // 'shared_metadata' is by views; 'cursor' to signal crossing post bounds
     let mut cursor = 1;
     debug_assert!(cursor != 0);
-    let mut post_data = &linker_metadata[..];
+    let mut post_data = &linker_metadata[..]; // Subarray of all views for post
+
     for i in 0..view_count {
         let shared = &shared_metadata[i];
+
+        // Crossed into the bounds of a new post
         if cursor != shared.path_index {
             cursor = shared.path_index;
             post_data = &linker_metadata[i..i + shared.post_lang_count];
         }
+
         let my_data = &linker_metadata[i];
-        let (target, args) = fmt_linker_args(config, &shared_metadata[i], post_data, my_data);
+        let target = [config.public_dir, "/", my_data.relative_output_loc.as_str()].join("");
+        let input_path_obj = &input_list[shared.path_index];
+        let output_path = Path::new(target.as_str());
+        let is_target_missing_or_outdated = PathReadMetadata::wrap(output_path)
+            .map(|_| changelog.check_if_outdated(&input_path_obj))
+            .unwrap_or(true); // File is missing (or other error)
 
-        let args = {
-            let mut borrow: Vec<&str> = Vec::with_capacity(args.len());
-            for entry in &args {
-                borrow.push_and_check(entry);
+        //let path = PathReadMetadata::wrap(Path::new(target.as_str())).unwrap();
+        //println!("{:?} {:?}\n{:?}\n{} {:?}\n", is_target_missing_or_outdated,
+        //    path.updated,
+        //    Utc::now(),
+        //    path.stem, changelog.0.get(path.stem),
+
+        //    );
+        //if true {
+        //} else
+        if shared.is_outdated || is_target_missing_or_outdated {
+            let args = fmt_linker_args(
+                config,
+                target.as_str(),
+                &shared_metadata[i],
+                post_data,
+                my_data,
+            );
+
+            let args = {
+                let mut borrow: Vec<&str> = Vec::with_capacity(args.len());
+                for entry in &args {
+                    borrow.push_and_check(entry);
+                }
+                borrow
+            };
+
+            create_parent_dir(target.as_str()).or_die(1);
+            // @TODO Only link if out of date or final file is missing
+            eprintln!("Linking {} {}", my_data.lang, target.escape());
+            print!(
+                "{}",
+                command_run(
+                    Path::new(config.linker),
+                    (config.domain, config.blog_relative),
+                    None,
+                    &args,
+                )
+                .or_die(1)
+            );
+
+            if config.explicit {
+                eprint!("=== Arg 1: Frontmatter ====\n{}", &args[0]);
+                eprint!("=== Rest ===\n");
+                for line in &args[1..] {
+                    eprint!("{}\n", line);
+                }
+                eprint!("\n");
             }
-            borrow
-        };
-
-        create_parent_dir(target.as_str()).or_die(1);
-        // @TODO Only link if out of date or final file is missing
-        print!(
-            "{}",
-            command_run(
-                Path::new(config.linker),
-                (config.domain, config.blog_relative),
-                None,
-                &args,
-            )
-            .or_die(1)
-        );
-
-        eprintln!("Linking {} {}", my_data.lang, target.escape());
-        if config.verbose {
-            eprint!("=== Arg 1: Frontmatter ====\n{}", &args[0]);
-            eprint!("=== Rest ===\n");
-            for line in &args[1..] {
-                eprint!("{}\n", line);
-            }
-            eprint!("\n");
+        } else if config.verbose {
+            eprintln!("Skipping linking {} {}", my_data.lang, target.escape());
         }
     }
 }
@@ -386,9 +420,14 @@ fn join_partials(
 fn write_caches(
     config: &RequiredConfigs,
     id_map: HashMap<&str, ()>,
+    shared_metadata: &MetadataCache,
+    changelog: &UpdateTimes,
     linker_metadata: &[LinkerViewMetadata],
 ) {
     debug_assert_eq!(id_map.len(), linker_metadata.len());
+    let is_any_file_changed = shared_metadata
+        .iter()
+        .fold(false, |acc, data| acc || data.is_outdated);
     let view_count = linker_metadata.len();
 
     fn read_and_sieve_in_old<'a>(
@@ -400,7 +439,7 @@ fn write_caches(
     ) -> Vec<Cow<'a, str>> {
         let path = Path::new(pathstr);
         if let Err(err) = read_file(path, old_cache) {
-            eprintln!("Generating {}...\n  {}", pathstr.escape(), err.to_string());
+            eprintln!("{}.\n-> Generating {}...", err, pathstr.escape());
         }
 
         let mut cache = Vec::with_capacity(old_cache.lines().count() + count);
@@ -411,31 +450,38 @@ fn write_caches(
         cache
     }
 
-    let mut tags_old = String::new();
-    let tags_loc = config.tags_cache.as_str();
-    let mut tags = read_and_sieve_in_old(&id_map, tags_loc, &mut tags_old, view_count, 2);
-    tags.extend(
-        linker_metadata
-            .iter()
-            .flat_map(|x| x.tags_cache_line.split('\n').map(|x| Cow::Borrowed(x))),
-    );
-    tags.sort();
-    eprintln!("Saving tags cache to {}", tags_loc.escape());
-    fs::write(tags_loc, tags.join("\n")).or_die(1);
-    //println!("{:#?}\n", tags);
+    if is_any_file_changed {
+        eprintln!("Saving file update times to {}", config.changelog.escape());
+        changelog.write_to(config.changelog.as_str()).or_die(1);
 
-    let mut link_old = String::new();
-    let link_loc = config.link_cache.as_str();
-    let mut link = read_and_sieve_in_old(&id_map, link_loc, &mut link_old, view_count, 0);
-    link.extend(
-        linker_metadata
-            .iter()
-            .map(|x| Cow::Owned([x.id, x.lang, x.relative_output_loc.as_str()].join(","))),
-    );
-    link.sort();
-    eprintln!("Saving link cache to {}", link_loc.escape());
-    fs::write(link_loc, link.join("\n")).or_die(1);
-    //println!("{:#?}\n", link);
+        let mut tags_old = String::new();
+        let tags_loc = config.tags_cache.as_str();
+        let mut tags = read_and_sieve_in_old(&id_map, tags_loc, &mut tags_old, view_count, 2);
+        tags.extend(
+            linker_metadata
+                .iter()
+                .flat_map(|x| x.tags_cache_line.split('\n').map(|x| Cow::Borrowed(x))),
+        );
+        tags.sort_unstable();
+        eprintln!("Saving tags cache to {}", tags_loc.escape());
+        write_file(tags_loc, tags.join("\n").as_str()).or_die(1);
+        //eprintln!("{:#?}\n", tags);
+
+        let mut link_old = String::new();
+        let link_loc = config.link_cache.as_str();
+        let mut link = read_and_sieve_in_old(&id_map, link_loc, &mut link_old, view_count, 0);
+        link.extend(
+            linker_metadata
+                .iter()
+                .map(|x| Cow::Owned([x.id, x.lang, x.relative_output_loc.as_str()].join(","))),
+        );
+        link.sort_unstable();
+        eprintln!("Saving link cache to {}", link_loc.escape());
+        write_file(link_loc, link.join("\n").as_str()).or_die(1);
+        //eprintln!("{:#?}\n", link);
+    } else {
+        eprintln!("No change in posts detected, caches unmodified (use --force to override)");
+    }
 }
 
 macro_rules! build_and_count_capacity {
@@ -458,12 +504,12 @@ macro_rules! build_and_count_capacity {
 // Mostly separate this for the white space
 fn fmt_linker_args<'shared, 'frontmatter_string>(
     config: &RequiredConfigs,
+    local_target: &str,
     shared: &'shared ViewMetadata,
     post_data: &[LinkerViewMetadata],
     data: &'frontmatter_string LinkerViewMetadata<'shared, '_, 'frontmatter_string>,
-) -> (String, Vec<Cow<'frontmatter_string, str>>) {
+) -> Vec<Cow<'frontmatter_string, str>> {
     let relative_target = data.relative_output_loc.as_str();
-    let local_target = [config.public_dir, "/", relative_target].join("");
     let lang_count = shared.post_lang_count;
     // ALL label is lang_count of 0, we want: min(0, lang_count - 1)
     let other_lang_count = if lang_count > 0 { lang_count - 1 } else { 0 };
@@ -483,7 +529,7 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
         Cow::Owned(["local_templates_dir:", config.templates_dir].join("")),
         Cow::Owned(["local_toc_path:", shared.toc_loc.as_str()].join("")),
         Cow::Owned(["local_doc_path:", shared.doc_loc.as_str()].join("")),
-        Cow::Owned(["local_output_path:", local_target.as_str()].join("")),
+        Cow::Owned(["local_output_path:", local_target].join("")),
         Cow::Owned(["relative_output_url:", relative_target].join("")),
         //Cow::Owned(["relative_tags_url:", data.tags_loc.as_str()].join("")),
         Cow::Owned([
@@ -492,30 +538,87 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
             data.other_langs.1
         ].join("")),
     }
-
-    for i in 0..lang_count {
-        if i == shared.view_index {
-            continue;
-        }
-        api_keyvals.push_and_check(Cow::Owned(
-            [
-                "relative_",
-                post_data[i].lang,
-                "_view:",
-                post_data[i].relative_output_loc.as_str(),
-                //relative_target.as_str(),
-            ]
-            .join(""),
-        ));
-    }
+    post_data
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i != &shared.view_index)
+        .map(|(_, data)| (data.lang, data.relative_output_loc.as_str()))
+        .map(|(lang, loc)| ["relative_", lang, "_view:", loc].join(""))
+        .for_each(|keyval| api_keyvals.push_and_check(Cow::Owned(keyval)));
     assert_eq!(capacity, api_keyvals.len());
 
-    (local_target, api_keyvals)
+    api_keyvals
 }
 
 /******************************************************************************
  * Helper functions
  ******************************************************************************/
+#[derive(Debug)]
+struct UpdateTimes<'log>(HashMap<&'log str, DateTime<Utc>>);
+
+impl<'log> UpdateTimes<'log> {
+    fn new(log_str: &'log str) -> Result<Self, ParseError> {
+        let mut log = HashMap::with_capacity(log_str.lines().count());
+        //eprintln!("{:?}", log_str.lines().collect::<Vec<_>>());
+        for (i, line) in log_str.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
+            // @TODO push_and_check for hash
+            let (id, timestr) = line
+                .rfind(',')
+                .map(|delim_index| line.split_at(delim_index))
+                .ok_or_else(|| -> ParseError {
+                    (
+                        i + 1,
+                        line,
+                        Cow::Borrowed("Missing a second column (comma-separated)."),
+                    )
+                        .into()
+                })?;
+            let timestamp = NaiveDateTime::parse_from_str(&timestr[','.len_utf8()..], "%s")
+                .map_err(|err| ParseError::from((i + 1, line, Cow::Owned(err.to_string()))))?;
+            log.insert(id, Utc.from_utc_datetime(&timestamp));
+        }
+        Ok(Self(log))
+    }
+
+    fn check_if_outdated2(&self, id: &str, timestamp: &DateTime<Utc>) -> bool {
+        self.0
+            .get(id)
+            .map(|logged_time| timestamp > logged_time)
+            .unwrap_or(true)
+    }
+    fn check_if_outdated(&self, id: &PathReadMetadata) -> bool {
+        self.0
+            .get(id.stem)
+            .map(|log| &id.updated > log)
+            .unwrap_or(true)
+    }
+
+    fn update(&mut self, id: &PathReadMetadata<'log>) {
+        self.0.insert(id.stem, Utc::now());
+    }
+
+    const MAX_DIGITS: usize = "-9223372036854775808".len();
+
+    fn write_to(&self, loc: &str) -> Result<(), String> {
+        debug_assert_eq!(i64::MIN, -9223372036854775808);
+        let capacity = self
+            .0
+            .iter()
+            .fold(0, |sum, (key, _)| sum + key.len() + 2 + Self::MAX_DIGITS);
+
+        let mut buffer = String::with_capacity(capacity);
+        for (key, datetime) in self.0.iter() {
+            buffer.push_str(key);
+            buffer.push(',');
+            let timestamp: i64 = datetime.timestamp();
+            buffer.push_str(timestamp.to_string().as_str());
+            buffer.push('\n');
+        }
+
+        write_file(loc, buffer.as_str())
+    }
+}
+
 fn to_datetime(
     time_result: io::Result<SystemTime>,
 ) -> Result<DateTime<Utc>, (&'static str, String)> {
@@ -536,7 +639,7 @@ fn to_datetime(
 }
 
 #[derive(Debug)]
-struct PathWrapper<'path> {
+struct PathReadMetadata<'path> {
     path: &'path Path,
     stem: &'path str,
     extension: &'path str,
@@ -544,7 +647,7 @@ struct PathWrapper<'path> {
     updated: DateTime<Utc>,
 }
 
-impl<'path> PathWrapper<'path> {
+impl<'path> PathReadMetadata<'path> {
     fn wrap(path: &'path Path) -> Result<Self, String> {
         let stem_os = path.file_stem().ok_or_else(|| {
             [
@@ -643,6 +746,32 @@ fn exclude<'a>(space_delimited_str: &'a str, to_skip: &'a str) -> (&'a str, &'a 
     let left = &space_delimited_str[0..left_close];
     let right = &space_delimited_str[right_start..];
     (left, right)
+}
+
+fn read_file(path: &Path, buffer: &mut String) -> Result<usize, String> {
+    fs::File::open(path)
+        .and_then(|mut file| file.read_to_string(buffer))
+        .map_err(|err| {
+            [
+                "Cannot read ",
+                path.to_string_lossy().escape().as_str(),
+                ". ",
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })
+}
+
+fn write_file(loc: &str, buffer: &str) -> Result<(), String> {
+    fs::write(loc, buffer).map_err(|err| {
+        [
+            "Cannot write to ",
+            loc.escape().as_str(),
+            ". ",
+            err.to_string().as_str(),
+        ]
+        .join("")
+    })
 }
 
 /******************************************************************************

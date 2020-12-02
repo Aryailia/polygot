@@ -1,6 +1,12 @@
 use std::borrow::Cow;
 use std::fmt;
 
+// Primarily provides two custom error types that convert to String easily
+//  - My custom errors are primarily to deal with parsing errors
+//
+// For errors in general, e.g. io::Error, no support is provided
+// Additionally, 'or_die' is provided as a trait in the 'traits' module
+
 fn pad(buffer: &mut String, len: usize, to_pad: &str) {
     assert!(to_pad.len() <= len);
     buffer.push_str(to_pad);
@@ -18,7 +24,7 @@ fn error_writer_allocations() {
     assert!(!err.to_string().is_empty());
     let err: ParseError = (10, "The caturday\n", Cow::from("the mat")).into();
     assert!(!err.to_string().is_empty());
-    assert!(!err.with_filename(Cow::Borrow("fat.adoc")).to_string().is_empty());
+    assert!(!err.with_filename(Cow::Borrowed("fat.adoc")).to_string().is_empty());
 }
 
 //#[derive(Debug)]

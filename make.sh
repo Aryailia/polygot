@@ -24,9 +24,14 @@ OPTIONS
   --help (alias: -h)
     Display this help message
 
+  --explicit (alias: -e)
+    Even more information
+
   --force (alias: -f)
     Forces recompiling
 
+  --verbose (alias: -v)
+    Details every options more explicitly
 EOF
 }
 
@@ -78,12 +83,16 @@ main() {
 
   # Flags
   FORCE='false'
+  EXPLICIT=''
+  VERBOSE=''
 
   # Options processing
   args=''
   for a in "$@"; do case "${a}"
     in -h|--help)  show_help; exit 0
-    ;; -f|--force) FORCE='true'
+    ;; -e|--explicity)  EXPLICIT='--explicit'
+    ;; -f|--force)      FORCE='true'
+    ;; -v|--verbose)    VERBOSE='--verbose'
 
     ;; -*) die FATAL 1 "Invalid option '${a}'. See \`${NAME} -h\` for help"
     ;; *)  args="${args} ${a}"
@@ -95,7 +104,7 @@ main() {
 
   eval "set -- ${args}"
 
-  # Run this first
+  # Run these commands first
   for subcommand in "$@"; do case "${subcommand}"
     in build-rust)    build_rust
   esac; done
@@ -107,13 +116,17 @@ main() {
 
   for subcommand in "$@"; do case "${subcommand}"
     in clean-cache)
-      outln "Removing contents of '${CACHE}/'..."
+      errln "Removing contents of '${CACHE}/'..."
       rm -rf "${CACHE}"
     ;; clean-public)
-      outln "Removing contents of '${PUBLIC}/'..."
+      errln "Removing contents of '${PUBLIC}/'..."
       rm -rf "${PUBLIC}"
+    ;; clean)
+      errln "Removing contents of '${CACHE}' and '${PUBLIC}/'..."
+      rm -rf "${CACHE}" "${PUBLIC}"
+
     ;; clean-all)
-      outln "Removing contents of '${CACHE}/', '${PUBLIC}/', 'target/' ..."
+      errln "Removing contents of '${CACHE}/', '${PUBLIC}/', 'target/' ..."
       require 'cargo'
       rm -rf "${CACHE}"
       rm -rf "${PUBLIC}"
@@ -140,7 +153,7 @@ main() {
       #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
       compile_blog
 
-    ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
+    ;; *) die FATAL 1 "\`${NAME} '${subcommand}'\` is an invalid subcommand."
   esac; done
 }
 #blah() {
@@ -179,8 +192,11 @@ compile_blog() {
     --output-format "${POST_OUTPUT}" \
     --public-dir "${PUBLIC}" \
     --templates-dir "${SITE_TEMPLATES}" \
+    ${EXPLICIT} \
     ${_force_option} \
+    ${VERBOSE} \
   # end
+
   then
     export LANG_LIST="$( <"${TAGS_CACHE}" cut -d ',' -f 4 | sort | uniq )"
 

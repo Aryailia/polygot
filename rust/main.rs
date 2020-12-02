@@ -116,7 +116,7 @@ macro_rules! define_config {
         }
         impl<'a> RequiredConfigs<'a> {
             fn unwrap(config: &'a Config) -> Self {
-                Self {
+                let mut output = Self {
                     $($o_id: config.$o_id,)*
                     $($r_id: config.$r_id.as_ref()
                         .ok_or(concat!("--", $r_long, " is a required option"))
@@ -124,7 +124,11 @@ macro_rules! define_config {
                         .as_str(),
                     )*
                     $($d_id: [config.$d_from.as_ref().unwrap(), $d_add].join(""),)*
+                };
+                if output.explicit {
+                    output.verbose = true;
                 }
+                output
             }
         }
     };
@@ -137,8 +141,9 @@ define_config! {
     @optional {
         // "help" is special cased (see macro definition)
         // short long ident: type = default => value after option specified
-        "v" "verbose" verbose: bool = false => true, // true if -v is specified
-        "f" "force"   force:  bool = false => true,
+        "v" "verbose"  verbose:  bool = false => true, // true if -v set
+        "f" "force"    force:    bool = false => true,
+        "e" "explicit" explicit: bool = false => true, // explicit sets verbose
     }
     @to_be_required {
         "a" "api-dir" api_dir,
@@ -199,7 +204,7 @@ fn main() {
 //    eprintln!()
 //}
 
-//run: ../build.sh build-rust clean compile-blog
+//run: ../../make.sh build-rust clean build
 
 fn sync_last_updated(first: &str, date_source: &str) -> ! {
     Path::new(date_source)
