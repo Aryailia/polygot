@@ -1,5 +1,6 @@
 use crate::traits::{ShellEscape, VecExt};
 use chrono::{DateTime, TimeZone, Utc};
+use filetime::FileTime;
 use std::{fs, io, path::Path, time::SystemTime};
 
 // @TODO test on windows
@@ -68,7 +69,10 @@ pub struct PathReadMetadata<'path> {
 }
 
 impl<'path> PathReadMetadata<'path> {
-    pub fn wrap(path: &'path Path) -> Result<Self, String> {
+    pub fn wrap_with_metadata(
+        path: &'path Path,
+        metadata_result: &io::Result<fs::Metadata>,
+    ) -> Result<Self, String> {
         let stem_os = path.file_stem().ok_or_else(|| {
             [
                 "The post path ",
@@ -107,7 +111,7 @@ impl<'path> PathReadMetadata<'path> {
             .join("")
         })?;
 
-        let meta = path.metadata().map_err(|err| {
+        let meta = metadata_result.as_ref().map_err(|err| {
             [
                 "Cannot read metadata of ",
                 path.to_string_lossy().escape().as_str(),
@@ -116,26 +120,16 @@ impl<'path> PathReadMetadata<'path> {
             ]
             .join("")
         })?;
-        let updated = to_datetime(meta.modified()).map_err(|(my_err, sys_err)| {
-            [
-                "The file created date of ",
-                path.to_string_lossy().escape().as_str(),
-                my_err,
-                ". ",
-                sys_err.as_str(),
-            ]
-            .join("")
-        })?;
-        let created = to_datetime(meta.created()).map_err(|(my_err, sys_err)| {
-            [
-                "The file last updated date metadata of ",
-                path.to_string_lossy().escape().as_str(),
-                my_err,
-                ". ",
-                sys_err.as_str(),
-            ]
-            .join("")
-        })?;
+
+        let updated = Utc.timestamp(
+            FileTime::from_last_modification_time(meta).unix_seconds(),
+            0,
+        );
+        let created = FileTime::from_creation_time(meta)
+            .map(|filetime| Utc.timestamp(filetime.unix_seconds(), 0))
+            .unwrap_or(Utc.timestamp(0, 0));
+        // 'chrono::Utc.timestamp' errors at i64::MIN
+        //.unwrap_or(Utc.timestamp(i64::MIN, 0));
 
         Ok(Self {
             path,
@@ -144,6 +138,10 @@ impl<'path> PathReadMetadata<'path> {
             created,
             updated,
         })
+    }
+
+    pub fn wrap(path: &'path Path) -> Result<Self, String> {
+        Self::wrap_with_metadata(path, &path.metadata())
     }
 }
 

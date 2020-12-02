@@ -23,7 +23,7 @@ mod post;
 mod traits;
 
 use compile::compile;
-use helpers::program_name;
+use helpers::{program_name, PathReadMetadata};
 use traits::{ResultExt, ShellEscape, VecExt};
 
 macro_rules! match_subcommands {
@@ -186,13 +186,21 @@ fn main() {
         2, "compile-markup" => {
             let source = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
-            compile(&unwrapped_config, &[PathBuf::from(source)]);
+
+            let input_path = Path::new(source.as_str());
+            let input = PathReadMetadata::wrap(input_path).or_die(1);
+            compile(&unwrapped_config, &[input]);
         }
 
         2, "compile" => {
             let published_dir = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
-            let input_list = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
+            let input_owner = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
+            let mut input_list = Vec::with_capacity(input_owner.len());
+            for (pathbuf, metadata) in &input_owner {
+                let path_obj = PathReadMetadata::wrap_with_metadata(pathbuf.as_path(), metadata).or_die(1);
+                input_list.push_and_check(path_obj);
+            }
 
             compile(&unwrapped_config, input_list.as_slice());
         }
@@ -324,8 +332,12 @@ impl<'a> Iterator for OptionsSplit<'a> {
         }
     }
 }
+use std::io;
 
-fn shallow_walk(dir_loc: &str, is_verbose: bool) -> Result<Vec<PathBuf>, String> {
+fn shallow_walk(
+    dir_loc: &str,
+    is_verbose: bool,
+) -> Result<Vec<(PathBuf, io::Result<fs::Metadata>)>, String> {
     // @TODO: see if a there is a good way to precalculate
     let walk_dir = fs::read_dir(dir_loc).map_err(|err| {
         [
@@ -350,7 +362,7 @@ fn shallow_walk(dir_loc: &str, is_verbose: bool) -> Result<Vec<PathBuf>, String>
         })?;
         let path = entry.path();
         if path.is_file() {
-            list_of_paths.push(path);
+            list_of_paths.push((path, entry.metadata()));
         } else if is_verbose {
             return Err([
                 "Skipping processing ",

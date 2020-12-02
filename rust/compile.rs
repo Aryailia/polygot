@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     fs,
     io::Read,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use super::RequiredConfigs;
@@ -24,24 +24,21 @@ macro_rules! zip {
     };
 }
 
-// @TODO Create 'PathReadMetadata' from DirEntry walk
-// @TODO 'PathReadMetadata' move to helpers
 // @TODO remove println/eprintln replacing with writes to stdout/stderr
 // @TODO check if we can get away with just using Utc::now() for updating
 //       changelog; that we do not need to read output file updated time
 // @TODO Add spacing between different compile steps, make a print vec function
-// @TODO Decide on 'filetime' or rust's metadata for 'PathReadMetadata'
 // @TODO delete file
 // @TODO rename file
 
-//run: ../../make.sh build -d
+//run: ../../make.sh build build-rust
 // run: cargo test compile -- --nocapture
 
 // A three-major-step build procees
 // 1. Analyse the metadata, process my custom markup
 // 2. Run the markup's compiler (markup->HTML) (Asciidoctor, org, Pandoc, etc.)
 // 3. Verify frontmatter, update the caches, then run the linker
-pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
+pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     // The relative relationship is:
     // - one source text <> one 'post' <> many langs/views
     // - one lang <> one view
@@ -51,11 +48,8 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
     // @TODO Handle this in main.rs
     let file_count = input_list.len();
     let mut id_map = HashMap::with_capacity(file_count);
-    let mut input_paths = Vec::with_capacity(file_count);
-    for x in input_list {
-        let path = PathReadMetadata::wrap(x).or_die(1);
+    for path in input_list {
         id_map.insert(path.stem, ());
-        input_paths.push_and_check(path);
     }
 
     // Read the changelog to see if posts is outdated
@@ -78,13 +72,13 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
     //  as only 'htmlify_into_partials' needs them so they could be dropped
     //  at 'join_partials'
     let mut text_list = Vec::with_capacity(file_count);
-    for path in &input_paths {
+    for path in input_list {
         let mut text = String::new();
         read_file(path.path, &mut text).or_die(1);
         text_list.push_and_check(text);
     }
     let (shared_view_metadata, api_and_comment, post_list, lang_list) =
-        analyse_metadata(config, &text_list, &changelog, &input_paths);
+        analyse_metadata(config, &text_list, &changelog, input_list);
 
     // Run the markup compiler
     //
@@ -93,20 +87,20 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
     // because it makes the lifetime dependency graph complicated
     htmlify_into_partials(
         config,
-        &input_paths,
+        input_list,
         &mut changelog,
         &shared_view_metadata,
         api_and_comment,
         post_list,
     );
-    // We can drop 'text_list' and 'api_and_comment' here
+    // We can drop 'text_list', 'post_list', and 'api_and_comment' here
 
     // Link/Join the partials into the final output
     // Frontmatter's lifetime depends on 'shared_view_metadata'
     join_partials(
         config,
         id_map,
-        &input_paths,
+        input_list,
         &changelog,
         &shared_view_metadata,
         &lang_list,
@@ -578,7 +572,7 @@ impl<'log> UpdateTimes<'log> {
         //eprintln!("{:?}", log_str.lines().collect::<Vec<_>>());
         for (i, line) in log_str.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
             // @TODO push_and_check for hash
-            let (id, timestr) = line
+            let (id, timestr_with_comma) = line
                 .rfind(',')
                 .map(|delim_index| line.split_at(delim_index))
                 .ok_or_else(|| -> ParseError {
@@ -589,7 +583,9 @@ impl<'log> UpdateTimes<'log> {
                     )
                         .into()
                 })?;
-            let timestamp = NaiveDateTime::parse_from_str(&timestr[','.len_utf8()..], "%s")
+
+            let timestr = &timestr_with_comma[','.len_utf8()..];
+            let timestamp = NaiveDateTime::parse_from_str(timestr, "%s")
                 .map_err(|err| ParseError::from((i + 1, line, Cow::Owned(err.to_string()))))?;
             log.insert(id, Utc.from_utc_datetime(&timestamp));
         }
