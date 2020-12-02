@@ -26,7 +26,6 @@ macro_rules! zip {
 
 // @TODO Create 'PathReadMetadata' from DirEntry walk
 // @TODO 'PathReadMetadata' move to helpers
-// @TODO Redo 'split_over'
 // @TODO remove println/eprintln replacing with writes to stdout/stderr
 // @TODO check if we can get away with just using Utc::now() for updating
 //       changelog; that we do not need to read output file updated time
@@ -35,7 +34,7 @@ macro_rules! zip {
 // @TODO delete file
 // @TODO rename file
 
-//run: ../../make.sh build-rust build
+//run: ../../make.sh build -d
 // run: cargo test compile -- --nocapture
 
 // A three-major-step build procees
@@ -451,7 +450,9 @@ fn write_caches(
     changelog: &UpdateTimes,
     linker_metadata: &[LinkerViewMetadata],
 ) {
-    debug_assert_eq!(id_map.len(), linker_metadata.len());
+    debug_assert_eq!(changelog.0.len(), id_map.len());
+    debug_assert_eq!(shared_metadata.len(), linker_metadata.len());
+
     let is_any_file_changed = shared_metadata
         .iter()
         .fold(false, |acc, data| acc || data.is_outdated);

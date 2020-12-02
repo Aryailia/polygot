@@ -24,6 +24,9 @@ OPTIONS
   --help (alias: -h)
     Display this help message
 
+  --debug-profile (alias: -d)
+    Run with 'cargo run'
+
   --explicit (alias: -e)
     Even more information
 
@@ -83,6 +86,7 @@ main() {
 
   # Flags
   FORCE='false'
+  DEBUG='false'
   EXPLICIT=''
   VERBOSE=''
 
@@ -90,9 +94,10 @@ main() {
   args=''
   for a in "$@"; do case "${a}"
     in -h|--help)  show_help; exit 0
-    ;; -e|--explicity)  EXPLICIT='--explicit'
-    ;; -f|--force)      FORCE='true'
-    ;; -v|--verbose)    VERBOSE='--verbose'
+    ;; -d|--debug-build)  DEBUG='true'
+    ;; -e|--explicity)    EXPLICIT='--explicit'
+    ;; -f|--force)        FORCE='true'
+    ;; -v|--verbose)      VERBOSE='--verbose'
 
     ;; -*) die FATAL 1 "Invalid option '${a}'. See \`${NAME} -h\` for help"
     ;; *)  args="${args} ${a}"
@@ -133,25 +138,30 @@ main() {
       cargo clean
       rm "${BLOG_API}"
 
-    ;; compile-blog)  compile_blog
-    ;; compile-website)
+    ;; build-blog)  build_blog
+    ;; build-website)
       errln "Building just the website (without the blog)..."
-      mkdir -p "${PUBLIC}"
-      do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
+
+    ;; build-all)
+      errln "Compiling rust..."
+      build_rust
+      errln "" "Building the website..."
+      build_website
+      errln "" "Building the blog..."
+      build_blog
 
     ;; build-rust)     # already handled
     ;; build)
-      errln "Building the website and the blog"
-      mkdir -p "${PUBLIC}"
-      do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
-      compile_blog
+      errln "Building the website and the blog..."
+      build_website
+      build_blog
 
     ;; test)
       #errln "for testing"
       #build_rust
-      #compile_post "${PUBLISHED}/blue.adoc"
+      #build_blog "${PUBLISHED}/blue.adoc"
       #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
-      compile_blog
+      build_blog
 
     ;; *) die FATAL 1 "\`${NAME} '${subcommand}'\` is an invalid subcommand."
   esac; done
@@ -174,30 +184,19 @@ build_rust() {
     && cp "target/release/${BLOG_API}" ./
 }
 
+build_website() {
+    mkdir -p "${PUBLIC}"
+    do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
+}
+
 #@TODO add verbose option
-compile_blog() {
+build_blog() {
   if "${FORCE}" || [ ! -e "${BLOG_OUTPUT}" ]
     then _force_option='--force'
     else _force_option=''
   fi
   mkdir -p "${CACHE}" "${BLOG_OUTPUT}"
-  if "${BLOG_API}" compile \
-    "${PUBLISHED}" \
-    \
-    --api-dir "${FILE_EXT_API}" \
-    --blog-relative "${BLOG_RELATIVE}" \
-    --cache-dir "${CACHE}" \
-    --domain "${DOMAIN}" \
-    --linker "${SITE_TEMPLATES}/post.sh" \
-    --output-format "${POST_OUTPUT}" \
-    --public-dir "${PUBLIC}" \
-    --templates-dir "${SITE_TEMPLATES}" \
-    ${EXPLICIT} \
-    ${_force_option} \
-    ${VERBOSE} \
-  # end
-
-  then
+  if rust_api compile "${PUBLISHED}"   ${_force_option}; then
     export LANG_LIST="$( <"${TAGS_CACHE}" cut -d ',' -f 4 | sort | uniq )"
 
     index_output="${BLOG_OUTPUT}/index.html"
@@ -221,6 +220,26 @@ compile_blog() {
 
 }
 
+rust_api() {
+  if "${DEBUG}"
+    then _api='cargo';       _args='run --'
+    else _api="${BLOG_API}"; _args=''
+  fi
+  #"${BLOG_API}" ${_args} "$@" \
+  "${_api}" ${_args} "$@" \
+    --api-dir "${FILE_EXT_API}" \
+    --blog-relative "${BLOG_RELATIVE}" \
+    --cache-dir "${CACHE}" \
+    --domain "${DOMAIN}" \
+    --linker "${SITE_TEMPLATES}/post.sh" \
+    --output-format "${POST_OUTPUT}" \
+    --public-dir "${PUBLIC}" \
+    --templates-dir "${SITE_TEMPLATES}" \
+    ${EXPLICIT} \
+    ${VERBOSE} \
+  # end
+}
+
 #run: sh % build-rust test
 update() {
   filename="${1##*/}"
@@ -234,9 +253,9 @@ update() {
   mkdir -p "${PUBLIC}/${parent}"
 
   shift 3 || exit "$?"
-  if "${FORCE}" || "${BLOG_API}" is-first-newer-than "${from}" "${into}"; then
+  if "${FORCE}" || rust_api is-first-newer-than "${from}" "${into}"; then
     "$@" "${from}" "${into}" || exit "$?"
-    "${BLOG_API}" sync-last-updated-of-first-to "${from}" "${into}"
+    rust_api sync-last-updated-of-first-to "${from}" "${into}"
     errln "Processed '\${SOURCE}/${from_rel}' -> '\${PUBLIC}/${into_rel}'"
   else
     errln "Not updated '\${SOURCE}/${from_rel}' <> '\${PUBLIC}/${into_rel}'"
