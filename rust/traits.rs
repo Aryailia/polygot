@@ -47,25 +47,38 @@ impl BoolExt for bool {
     //}
 }
 
+
+fn calculate_escape_len(substr: &str) -> usize {
+    let escapees = substr.chars().filter(|c| *c == '\'').count();
+    substr.len()
+        + escapees * "'\\''".len() // times four per single-quote in substr
+        + '\''.len_utf8() * 2      // leading and trailing single quotes
+}
+fn escape_push(substr: &str, buffer: &mut String) {
+    buffer.push('\'');
+    for c in substr.chars() {
+        if c == '\'' {
+            buffer.push_str("'\\''");
+        } else {
+            buffer.push(c);
+        }
+    }
+    buffer.push('\'');
+}
 // Escape single qoutes and add surrounding single quotes
 pub trait ShellEscape: AsRef<str> {
+    fn escape_to(&self, mut buffer: &mut String) {
+        let capacity = calculate_escape_len(self.as_ref());
+        buffer.clear();
+        buffer.reserve(capacity);
+        escape_push(self.as_ref(), &mut buffer);
+        debug_assert!(capacity >= buffer.len());
+    }
     fn escape(&self) -> String {
-        let substr = self.as_ref();
-        let escapees = substr.chars().filter(|c| *c == '\'').count();
-        let capacity = substr.len()
-            + escapees * "'\\''".len() // times four per single-quote in substr
-            + '\''.len_utf8() * 2      // leading and trailing single quotes
-        ;
+        let capacity = calculate_escape_len(self.as_ref());
         let mut output = String::with_capacity(capacity);
-        output.push('\'');
-        for c in substr.chars() {
-            if c == '\'' {
-                output.push_str("'\\''");
-            } else {
-                output.push(c);
-            }
-        }
-        output.push('\'');
+        escape_push(self.as_ref(), &mut output);
+        debug_assert!(capacity == output.len());
         output
     }
 }

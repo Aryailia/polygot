@@ -267,13 +267,7 @@ fn htmlify_into_partials<'input>(
     for (_, j, is_new_post, _, view_data) in walk(shared_view_metadata) {
         let path = &input_list[j];
         if is_new_post {
-            buffer.clear();
-            // @TODO implement non-allocating escape
-            buffer.push('"');
-            buffer.push_str(path.stem);
-            buffer.push('.');
-            buffer.push_str(path.extension);
-            buffer.push('"');
+            [path.stem, ".", path.extension].join("").escape_to(&mut buffer);
         }
 
         let toc_loc = view_data.toc_loc.as_str();
