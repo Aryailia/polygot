@@ -23,12 +23,12 @@ impl<T: std::fmt::Debug> VecExt<T> for Vec<T> {
     }
 }
 
+// clone of 'then_some()' in nightly: bool_to_option #64260
 pub trait BoolExt {
     fn to_some<T>(self, item: T) -> Option<T>;
     //fn or_die(self, msg: String);
 }
 impl BoolExt for bool {
-    // clone of 'then_some()' in nightly: bool_to_option #64260
     #[inline]
     fn to_some<T>(self, item: T) -> Option<T> {
         if self {
@@ -47,13 +47,14 @@ impl BoolExt for bool {
     //}
 }
 
+// Escape single qoutes and add surrounding single quotes
 pub trait ShellEscape: AsRef<str> {
     fn escape(&self) -> String {
         let substr = self.as_ref();
         let escapees = substr.chars().filter(|c| *c == '\'').count();
         let capacity = substr.len()
             + escapees * "'\\''".len() // times four per single-quote in substr
-            + '\''.len_utf8() * 2     // leading and trailing single quotes
+            + '\''.len_utf8() * 2      // leading and trailing single quotes
         ;
         let mut output = String::with_capacity(capacity);
         output.push('\'');
@@ -71,10 +72,11 @@ pub trait ShellEscape: AsRef<str> {
 impl ShellEscape for str {}
 impl ShellEscape for String {}
 
+
+// 
 pub trait ResultExt<T, E: Display> {
     fn or_die(self, exit_code: i32) -> T;
 }
-
 impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     fn or_die(self, exit_code: i32) -> T {
         match self {
@@ -87,6 +89,9 @@ impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     }
 }
 
+// This was used for Post and Frontmatter parsing; now only used for the latter
+// Although I could implement a more specialised iterator for Frontmatter,
+// I am keeping this here as a reference for other, future projects
 pub type RStr = Range<usize>;
 
 //trait RangeExt: std::slice::SliceIndex<str> {

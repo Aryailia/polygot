@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::{
     fs,
     io::{self, Read},
+    ops::Range,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -19,14 +20,20 @@ use crate::{
     traits::{BoolExt, ResultExt, ShellEscape, VecExt},
 };
 
+macro_rules! zip {
+    ($first:ident, $second:ident) => {
+        $first.iter().zip($second.iter())
+    };
+}
+
 // @TODO Create 'PathReadMetadata' from DirEntry walk
 // @TODO 'PathReadMetadata' move to helpers
 // @TODO Redo 'split_over'
-// @TODO explore implementing iterator compile.rs
 // @TODO remove println/eprintln replacing with writes to stdout/stderr
 // @TODO check if we can get away with just using Utc::now() for updating
 //       changelog; that we do not need to read output file updated time
 // @TODO Add spacing between different compile steps, make a print vec function
+// @TODO Decide on 'filetime' or rust's metadata for 'PathReadMetadata'
 
 //run: ../../make.sh build-rust build
 // run: cargo test compile -- --nocapture
@@ -110,9 +117,9 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathBuf]) {
 /******************************************************************************/
 // Parse the custom markup and metadata
 
+// Specifically contains only owned data
 #[derive(Debug)]
 struct ViewMetadata {
-    path_index: usize,
     view_index: usize,
     is_outdated: bool,
     frontmatter_string: String,
@@ -121,11 +128,52 @@ struct ViewMetadata {
     toc_loc: String,
     doc_loc: String,
 }
+type ApiAndComment<'path, 'config> = HashMap<&'path str, (FileApi<'config>, String)>;
 
 // Using this so that we can discard 'api_and_comment' and 'text_list'
 // before the linker step
 type MetadataCache = Vec<ViewMetadata>;
-type ApiAndComment<'path, 'config> = HashMap<&'path str, (FileApi<'config>, String)>;
+
+struct MetadataCache2(Vec<ViewMetadata>);
+struct ViewMetadataWalker<'a> {
+    index: usize,
+    file_index: usize,
+    start: usize,
+    close: usize,
+    iter: std::slice::Iter<'a, ViewMetadata>,
+}
+fn walk(shared_view_metadata: &MetadataCache) -> ViewMetadataWalker {
+    ViewMetadataWalker {
+        index: 0,
+        file_index: 0,
+        start: 0,
+        close: 0,
+        iter: shared_view_metadata.iter()
+    }
+}
+
+impl<'a> Iterator for ViewMetadataWalker<'a> {
+
+    // index, if new post subarray, post subarray, view metadata
+    type Item = (usize, usize, bool, Range<usize>, &'a ViewMetadata);
+    fn next(&mut self) -> Option<Self::Item> {
+        let metadata = self.iter.next()?;
+        let index = self.index;
+        self.index += 1;
+
+        // Always runs first time
+        let is_cross_into_new_post = index >= self.close;
+        if is_cross_into_new_post {
+            self.start = index;
+            self.file_index += 1;
+            self.close = index + metadata.post_lang_count;
+        }
+
+        Some((index, self.file_index - 1, is_cross_into_new_post, self.start..self.close, metadata))
+    }
+}
+
+
 fn analyse_metadata<'config, 'text, 'path>(
     config: &'config RequiredConfigs,
     text_list: &'text [String],
@@ -146,8 +194,7 @@ fn analyse_metadata<'config, 'text, 'path>(
     let mut api_and_comment = HashMap::new();
     let mut post_list = Vec::with_capacity(len);
     let mut views_count = 0;
-    for i in 0..len {
-        let path = &input_paths[i];
+    for (path, text) in zip!(input_paths, text_list) {
         let extension = path.extension;
         if !api_and_comment.contains_key(extension) {
             let api = FileApi::from_filename(
@@ -160,7 +207,7 @@ fn analyse_metadata<'config, 'text, 'path>(
             api_and_comment.insert(extension, (api, comment));
         }
         let (_, comment) = api_and_comment.get(extension).unwrap();
-        let post = Post::new(&text_list[i], comment.as_str())
+        let post = Post::new(text, comment.as_str())
             .map_err(|err| err.with_filename(path.path.to_string_lossy()))
             .or_die(1);
 
@@ -168,17 +215,16 @@ fn analyse_metadata<'config, 'text, 'path>(
         post_list.push_and_check(post);
     }
 
-    // Build 'shared_metadata' (frontmatter)
+    // Build 'shared_metadata' (referenes frontmatter)
     // This is independent of 'text_list' lifetime
     let mut shared_metadata = Vec::with_capacity(views_count);
     let mut lang_list = Vec::with_capacity(len);
-    for i in 0..len {
-        let path = &input_paths[i];
+    for (path, post) in zip!(input_paths, post_list) {
         let (api, _) = api_and_comment.get(path.extension).unwrap();
-        let lang_list_string = post_list[i].lang_list.join(" ");
+        let lang_list_string = post.lang_list.join(" ");
 
         let mut from = 0;
-        for (j, view) in post_list[i].views.iter().enumerate() {
+        for (j, view) in post.views.iter().enumerate() {
             let frontmatter_string = api.frontmatter(view.body.as_slice()).or_die(1);
             let lang_str = view.lang.unwrap_or("");
             let lang_range = from..from + lang_str.len();
@@ -186,11 +232,10 @@ fn analyse_metadata<'config, 'text, 'path>(
             assert_eq!(lang_str, &lang_list_string[lang_range.clone()]);
 
             shared_metadata.push_and_check(ViewMetadata {
-                path_index: i,
                 view_index: j,
                 is_outdated: changelog.check_if_outdated(path),
                 frontmatter_string,
-                post_lang_count: post_list[i].lang_list.len(),
+                post_lang_count: post.lang_list.len(),
                 lang: lang_range,
                 toc_loc: [config.cache_dir, "/toc/", lang_str, "/", path.stem, ".html"].join(""),
                 doc_loc: [config.cache_dir, "/doc/", lang_str, "/", path.stem, ".html"].join(""),
@@ -220,16 +265,10 @@ fn htmlify_into_partials<'input>(
     debug_assert_eq!(input_list.len(), post_list.len());
 
     // Because we flatten post views, using cursor to
-    let mut cursor = 1;
-    debug_assert_ne!(cursor, 0);
     let mut buffer = String::new();
-
-    for view_data in shared_metadata {
-        let i = view_data.path_index;
-        let path = &input_list[i];
-        let is_new_post = cursor != i;
+    for (_, j, is_new_post, _, view_data) in walk(shared_metadata) {
+        let path = &input_list[j];
         if is_new_post {
-            cursor = i;
             buffer.clear();
             // @TODO implement non-allocating escape
             buffer.push('"');
@@ -244,7 +283,7 @@ fn htmlify_into_partials<'input>(
 
         if view_data.is_outdated || !Path::new(toc_loc).exists() || !Path::new(doc_loc).exists() {
             let (api, _) = api_and_comment.get(path.extension).unwrap();
-            let view = &post_list[i].views[view_data.view_index];
+            let view = &post_list[j].views[view_data.view_index];
 
             // @TODO: Create directories in building api cache (less work)
             create_parent_dir(toc_loc).or_die(1);
@@ -262,9 +301,7 @@ fn htmlify_into_partials<'input>(
                 eprintln!("Compiling {}", buffer);
             }
         } else if is_new_post {
-            //"Skipping finished {} (use --force to not skip)",
-            //eprint!("Compiling {} to ");
-            eprintln!("Skipping compiling {}", buffer);
+            eprintln!("Skipping {} compile (use --force to not skip)", buffer);
         }
     }
 }
@@ -298,9 +335,8 @@ fn join_partials(
     // So first render the links into 'view_links'
     let view_count = shared_metadata.len();
     let mut linker_metadata = Vec::with_capacity(view_count);
-    for view_data in shared_metadata {
-        let i = view_data.path_index;
-        let path = &input_list[i];
+    for (_, j, _, _, view_data) in walk(shared_metadata) {
+        let path = &input_list[j];
         let frontmatter = Frontmatter::new(
             view_data.frontmatter_string.as_str(),
             path.created,
@@ -308,7 +344,7 @@ fn join_partials(
         )
         .map_err(|err| err.with_filename(path.path.to_string_lossy()))
         .or_die(1);
-        let lang = &lang_group_list[i][view_data.lang.clone()];
+        let lang = &lang_group_list[j][view_data.lang.clone()];
 
         linker_metadata.push_and_check(LinkerViewMetadata {
             frontmatter_serialised: frontmatter.serialise(),
@@ -320,7 +356,7 @@ fn join_partials(
                 Some(Value::Utf8(s)) => s,
                 _ => "",
             },
-            other_langs: exclude(&lang_group_list[i], lang),
+            other_langs: exclude(&lang_group_list[j], lang),
         });
     }
 
@@ -341,23 +377,11 @@ fn join_partials(
     //    .chain()
 
     // Run the linker to join the partials (toc and doc)
-    // 'shared_metadata' is by views; 'cursor' to signal crossing post bounds
-    let mut cursor = 1;
-    debug_assert!(cursor != 0);
-    let mut post_data = &linker_metadata[..]; // Subarray of all views for post
-
-    for i in 0..view_count {
-        let shared = &shared_metadata[i];
-
-        // Crossed into the bounds of a new post
-        if cursor != shared.path_index {
-            cursor = shared.path_index;
-            post_data = &linker_metadata[i..i + shared.post_lang_count];
-        }
-
+    for (i, j, _, post_range, shared) in walk(shared_metadata) {
+        let post_data = &linker_metadata[post_range];
         let my_data = &linker_metadata[i];
         let target = [config.public_dir, "/", my_data.relative_output_loc.as_str()].join("");
-        let input_path_obj = &input_list[shared.path_index];
+        let input_path_obj = &input_list[j];
         let output_path = Path::new(target.as_str());
         let is_target_missing_or_outdated = PathReadMetadata::wrap(output_path)
             .map(|_| changelog.check_if_outdated(&input_path_obj))
