@@ -85,10 +85,9 @@ pub trait ShellEscape: AsRef<str> {
 impl ShellEscape for str {}
 impl ShellEscape for String {}
 
-
-// 
 pub trait ResultExt<T, E: Display> {
     fn or_die(self, exit_code: i32) -> T;
+    fn or_eprint(self, value: T) -> T;
 }
 impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     fn or_die(self, exit_code: i32) -> T {
@@ -97,6 +96,16 @@ impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
             Err(err) => {
                 eprintln!("{}", err);
                 exit(exit_code)
+            }
+        }
+    }
+
+    fn or_eprint(self, value: T) -> T {
+        match self {
+            Ok(x) => x,
+            Err(err) => {
+                eprintln!("{}", err);
+                value
             }
         }
     }

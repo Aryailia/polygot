@@ -12,13 +12,17 @@ DESCRIPTION
   specify several SUBCOMMANDs
 
 SUBCOMMAND
- clean-public
- clean-cache
- clean-all
- compile-blog
- compile-website
- build-rust
- build             Builds both the website and the 
+ clean-public          Deletes the \${PUBLIC} directory
+ clean-cache           Deletes the \${CACHE} directory
+ clean                 Deletes the cache and public directories
+ clean-all             Deletes the cache, public, and target directories
+ build-blog            Builds all the blog posts
+ build-rust            Compiles rust to release (use --debug-profile)
+ build-website         Builds the website (compile/link/copy source -> public)
+ build                 Builds both the website and the blog posts
+ build-all             Runs build-blog, build-rust, build-website
+ delete-generated <1>  Deletes files and cache lines generated into cache and
+                       public directories made from <arg1> (i.e. same file stem)
 
 OPTIONS
   --help (alias: -h)
@@ -110,6 +114,8 @@ main() {
   eval "set -- ${args}"
 
   # Run these commands first
+  # BUG: `./make.sh delete-generated build-rust` is technically invalid
+  #      if build-rust is a file (but posts probably always have an extension)
   for subcommand in "$@"; do case "${subcommand}"
     in build-rust)    build_rust
   esac; done
@@ -119,7 +125,7 @@ main() {
     "'${BLOG_API}' was not found (blog api)." \
     "Run \`${NAME} build-rust\` (though one should be provided)"
 
-  for subcommand in "$@"; do case "${subcommand}"
+  while [ "$#" -gt 0 ]; do case "${1}"
     in clean-cache)
       errln "Removing contents of '${CACHE}/'..."
       rm -rf "${CACHE}"
@@ -156,15 +162,21 @@ main() {
       build_website
       build_blog
 
+    ;; delete-generated)
+      [ -n "${2}" ] || die FATAL 1 "\`${NAME} ${1}\` needs a second argument"
+      [ -f "${2}" ] || die FATAL 1 "File '${2}' does not exist"
+      rust_api delete-generated "${2}"; shift 1
+
     ;; test)
       #errln "for testing"
       #build_rust
       #build_blog "${PUBLISHED}/blue.adoc"
       #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
-      build_blog
+      #rust_api delete-generated "${2}"; shift 1
+      DOMAIN=~/interim/bl/website/public rust_api delete-generated 'config/published/archive-a-peek-at-unicodes-soft-underbelly.adoc'
 
-    ;; *) die FATAL 1 "\`${NAME} '${subcommand}'\` is an invalid subcommand."
-  esac; done
+    ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
+  esac; shift 1; done
 }
 #blah() {
 #  <<EOF cat - >"${TAGS_CACHE}"

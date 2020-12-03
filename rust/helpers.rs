@@ -14,6 +14,7 @@ pub const TAG_BLACKLIST: [char; 4] = [
 // This is slightly wasteful with memory
 // 'ignore_list' is expected to be small
 // returns the problematic tag
+// @FORMAT
 pub fn parse_tags_and_push<'a>(
     list: &mut Vec<&'a str>,
     line: &'a str,

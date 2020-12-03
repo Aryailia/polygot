@@ -1,4 +1,14 @@
 // This brings the disparate parts together to do the compile pipeline.
+//
+// The relative relationship is:
+// - one source text <> one 'post' <> many langs/views
+// - one lang <> one view
+// - one views <> one toc and one body (one post <> lang_num * 2 sections)
+// - one view <> one linked output file
+//
+// - one view <> shared view metadata
+// - one view <> linker view metadata
+
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use std::{borrow::Cow, collections::HashMap, fs, io::Read, path::Path};
 
@@ -22,8 +32,6 @@ macro_rules! zip {
 // @TODO check if we can get away with just using Utc::now() for updating
 //       changelog; that we do not need to read output file updated time
 // @TODO Add spacing between different compile steps, make a print vec function
-// @TODO cli subcommand for delete file
-// @TODO cli subcommand for rename file
 // @TODO support for light and dark modes
 // @TODO cli subcommands for running linker and compile step individually
 // @TODO cli subcommand for verify valid url links
@@ -32,70 +40,114 @@ macro_rules! zip {
 // @TODO add default language
 // @TODO figure out api for labeling series
 
-//run: ../../make.sh build test
+//run: ../../make.sh build-rust test
 // run: cargo test compile -- --nocapture
 
-type Shared<'config, 'path_list, 'path, 'shared> = (
+type Shared<'config, 'path_list, 'input_path, 'shared> = (
+    // Borrow RequiredConfig happens at its creation so 'config works for both
     &'config RequiredConfigs<'config>,
-    &'path_list [PathReadMetadata<'path>],
+    &'path_list [PathReadMetadata<'input_path>],
     &'shared [ViewMetadata],
 );
-// A three-major-step build procees
-// 1. Analyse the metadata, process my custom markup
-// 2. Run the markup's compiler (markup->HTML) (Asciidoctor, org, Pandoc, etc.)
-// 3. Verify frontmatter, update the caches, then run the linker
+
 pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
-    // The relative relationship is:
-    // - one source text <> one 'post' <> many langs/views
-    // - one lang <> one view
-    // - one views <> one toc and one body (one post <> lang_num * 2 sections)
-    // - one view <> one linked output file
+    // Read the 'input_list' into 'changelog' and 'text_list'
+    let mut log_owner = String::new();
+    let mut changelog = {
+        let log_str = read_file(Path::new(&config.changelog), &mut log_owner)
+            .map(|_| log_owner.as_str())
+            .unwrap_or("");
+        UpdateTimes::new(log_str)
+            .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
+            .or_die(1)
+    };
+    let text_list = {
+        let mut text_list = Vec::with_capacity(input_list.len());
+        for path in input_list {
+            let mut text = String::new();
+            read_file(path.path, &mut text).or_die(1);
+            text_list.push_and_check(text);
+        }
+        text_list
+    };
 
-    // Read the changelog to see if posts is outdated
-    // Update the changelog only after htmlify and frontmatter is verified
-    let mut log_result = String::new();
-    let log_str = read_file(Path::new(&config.changelog), &mut log_result)
-        .map(|_| log_result.as_str())
-        .unwrap_or("");
-    let mut changelog = UpdateTimes::new(log_str)
-        .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
-        .or_die(1);
-
-    // Parse into post_list, and extract relevant
-    // This data is split as so to manage ownership and lifetimes
-    // - 'shared_view_metadata' is for 'htmlify_into_partials' and  'join_partials'
-    //   - each will then compute the relevant borrowed data
-    // - 'post_list' borrows from 'text_list'
-    //
-    //  I separate out 'api_and_comment', 'post_list', and 'text_list'
-    //  as only 'htmlify_into_partials' needs them so they could be dropped
-    //  at 'join_partials'
-    let mut text_list = Vec::with_capacity(input_list.len());
-    for path in input_list {
-        let mut text = String::new();
-        read_file(path.path, &mut text).or_die(1);
-        text_list.push_and_check(text);
-    }
-    let (shared_view_metadata, api_and_comment, post_list, lang_list) =
+    // Parse into Post
+    // 'text_list', 'shared_metadata', 'lang_list', 'log_owner' are owned data;
+    // the rest are one-time use or borrow from these sources
+    let (shared_metadata, lang_list, api_and_comment, post_list) =
         analyse_metadata(config, &text_list, &changelog, input_list);
-    let shared = (config, input_list, shared_view_metadata.as_slice());
+    let shared = (config, input_list, shared_metadata.as_slice());
 
     // Run the markup compiler
-    //
-    // Though I probably should do the frontmatter validation before
-    // writing to files in 'htmlify_into_partials', but decided against it
-    // because it makes the lifetime dependency graph complicated
     htmlify_into_partials(shared, &mut changelog, api_and_comment, post_list);
     // We can drop 'text_list', 'post_list', and 'api_and_comment' here
 
-    // Link/Join the partials into the final output
-    // Frontmatter's lifetime depends on 'shared_view_metadata'
+    // Parse and verify the frontmatter
     let linker_view_metadata = linker_metadata_list_new(shared, &lang_list);
 
     // Must update the cache before linking as linker uses this info
-    write_caches(shared, &changelog, &linker_view_metadata);
+    write_caches(shared, &changelog, &linker_view_metadata, UPDATE);
 
+    // Link/Join the partials into the final output
     join_partials(shared, &changelog, &linker_view_metadata);
+}
+
+pub fn delete(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
+    let mut log_owner = String::new();
+    let mut changelog = {
+        let log_str = read_file(Path::new(&config.changelog), &mut log_owner)
+            .map(|_| log_owner.as_str())
+            .unwrap_or("");
+        UpdateTimes::new(log_str)
+            .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
+            .or_die(1)
+    };
+    let text_list = {
+        let mut text_list = Vec::with_capacity(input_list.len());
+        for path in input_list {
+            let mut text = String::new();
+            read_file(path.path, &mut text).or_die(1);
+            text_list.push_and_check(text);
+        }
+        text_list
+    };
+
+    let (shared_metadata, lang_list, _, _) =
+        analyse_metadata(config, &text_list, &changelog, input_list);
+    let shared = (config, input_list, shared_metadata.as_slice());
+    let linker_metadata = linker_metadata_list_new(shared, &lang_list);
+
+
+    // --- From here it is meaningfully different from `compile()` ----
+    // Delete toc, doc, and target
+    for view_data in &shared_metadata {
+        let toc_loc = view_data.toc_loc.as_str();
+        let doc_loc = view_data.doc_loc.as_str();
+        match delete_file(toc_loc) {
+            Ok(_) => eprintln!("Deleted {}", toc_loc.escape()),
+            err => err.or_eprint(()),
+        }
+        match delete_file(doc_loc) {
+            Ok(_) => eprintln!("Deleted {}", doc_loc.escape()),
+            err => err.or_eprint(()),
+        }
+    }
+    for view_data in &linker_metadata {
+        let target = output_target(config, view_data);
+
+        // These are public facing, so fail eagerly (without --force set)
+        match delete_file(target.as_str()) {
+            Ok(_) => eprintln!("Deleted {}", target.escape()),
+            err if !config.force => err.or_die(1),
+            err => err.or_eprint(()),
+        }
+    }
+
+    // Only update the logs once the public facing pages are deleted
+    for path in input_list {
+        changelog.remove(path);
+    }
+    write_caches(shared, &changelog, &linker_metadata, DELETE);
 }
 
 /******************************************************************************/
@@ -112,7 +164,7 @@ struct ViewMetadata {
     toc_loc: String,
     doc_loc: String,
 }
-type ApiAndComment<'path> = HashMap<&'path str, (FileApi, String)>;
+type ApiAndComment<'input_path> = HashMap<&'input_path str, (FileApi, String)>;
 
 // Using this so that we can discard 'api_and_comment' and 'text_list'
 struct ViewMetadataWalker<'a> {
@@ -122,13 +174,13 @@ struct ViewMetadataWalker<'a> {
     close: usize,
     iter: std::slice::Iter<'a, ViewMetadata>,
 }
-fn walk(shared_view_metadata: &[ViewMetadata]) -> ViewMetadataWalker {
+fn walk(shared_metadata: &[ViewMetadata]) -> ViewMetadataWalker {
     ViewMetadataWalker {
         index: 0,
         file_index: 0,
         start: 0,
         close: 0,
-        iter: shared_view_metadata.iter(),
+        iter: shared_metadata.iter(),
     }
 }
 
@@ -158,16 +210,16 @@ impl<'a> Iterator for ViewMetadataWalker<'a> {
     }
 }
 
-fn analyse_metadata<'config, 'text, 'path>(
+fn analyse_metadata<'config, 'text, 'input_path>(
     config: &'config RequiredConfigs,
     text_list: &'text [String],
     changelog: &UpdateTimes,
-    input_paths: &[PathReadMetadata<'path>],
+    input_paths: &[PathReadMetadata<'input_path>],
 ) -> (
     Vec<ViewMetadata>,
-    ApiAndComment<'path>,
-    Vec<Post<'text>>,
     Vec<String>,
+    ApiAndComment<'input_path>,
+    Vec<Post<'text>>,
 ) {
     debug_assert_eq!(text_list.len(), input_paths.len());
 
@@ -194,9 +246,9 @@ fn analyse_metadata<'config, 'text, 'path>(
         post_list.push_and_check(post);
     }
 
-    // Build 'shared_view_metadata' (referenes frontmatter)
+    // Build 'shared_metadata' (referenes frontmatter)
     // This is independent of 'text_list' lifetime
-    let mut shared_view_metadata = Vec::with_capacity(views_count);
+    let mut shared_metadata = Vec::with_capacity(views_count);
     let mut lang_list = Vec::with_capacity(len);
     for (path, post) in zip!(input_paths, post_list) {
         let (api, _) = api_and_comment.get(path.extension).unwrap();
@@ -209,7 +261,7 @@ fn analyse_metadata<'config, 'text, 'path>(
             let lang_range = from..from + lang_str.len();
             debug_assert_eq!(lang_str, &lang_list_string[lang_range.clone()]);
 
-            shared_view_metadata.push_and_check(ViewMetadata {
+            shared_metadata.push_and_check(ViewMetadata {
                 view_index: j,
                 is_outdated: changelog.check_if_outdated(path),
                 frontmatter_string,
@@ -224,7 +276,7 @@ fn analyse_metadata<'config, 'text, 'path>(
         lang_list.push_and_check(lang_list_string);
     }
 
-    (shared_view_metadata, api_and_comment, post_list, lang_list)
+    (shared_metadata, lang_list, api_and_comment, post_list)
 }
 
 /******************************************************************************/
@@ -232,19 +284,19 @@ fn analyse_metadata<'config, 'text, 'path>(
 // HTMLify the post (i.e. run through asciidoctor, etc.)
 // Also splits the table of contents (toc) and the body (doc)
 
-fn htmlify_into_partials<'path, 'log>(
-    (config, input_list, shared_view_metadata): Shared<'_, '_, 'path, '_>,
+fn htmlify_into_partials<'input_path, 'log>(
+    (config, input_list, shared_metadata): Shared<'_, '_, 'input_path, '_>,
     changelog: &mut UpdateTimes<'log>,
     api_and_comment: ApiAndComment,
     post_list: Vec<Post>, // Eat this
 ) where
-    'path: 'log,
+    'input_path: 'log,
 {
     debug_assert_eq!(input_list.len(), post_list.len());
 
     // Because we flatten post views, using cursor to
     let mut buffer = String::new();
-    for (_, j, is_new_post, _, view_data) in walk(shared_view_metadata) {
+    for (_, j, is_new_post, _, view_data) in walk(shared_metadata) {
         let path = &input_list[j];
         if is_new_post {
             [path.stem, ".", path.extension]
@@ -279,7 +331,7 @@ fn htmlify_into_partials<'path, 'log>(
                 eprintln!("Compiling {}", buffer);
             }
         } else if is_new_post {
-            eprintln!("Skipping {} compile (use --force to not skip)", buffer);
+            eprintln!("Skipping compile of {} (use --force to not skip)", buffer);
         }
     }
 }
@@ -289,8 +341,8 @@ fn htmlify_into_partials<'path, 'log>(
 // For each view, join the disparate sections into the final product
 
 #[derive(Debug)]
-struct LinkerViewMetadata<'path, 'lang_group_list, 'shared> {
-    id: &'path str,
+struct LinkerViewMetadata<'input_path, 'lang_group_list, 'shared> {
+    id: &'input_path str,
     frontmatter_serialised: String,
     series_cache_lines: Vec<String>,
     tags_cache_lines: Vec<String>,
@@ -299,17 +351,18 @@ struct LinkerViewMetadata<'path, 'lang_group_list, 'shared> {
     title: &'shared str,
     other_langs: (&'lang_group_list str, &'lang_group_list str),
 }
-fn linker_metadata_list_new<'path, 'lang_group_list, 'shared>(
-    (config, input_list, shared_view_metadata): Shared<'_, '_, 'path, 'shared>,
+
+fn linker_metadata_list_new<'input_path, 'lang_group_list, 'shared>(
+    (config, input_list, shared_metadata): Shared<'_, '_, 'input_path, 'shared>,
     lang_group_list: &'lang_group_list [String],
-) -> Vec<LinkerViewMetadata<'path, 'lang_group_list, 'shared>> {
+) -> Vec<LinkerViewMetadata<'input_path, 'lang_group_list, 'shared>> {
     debug_assert_eq!(input_list.len(), lang_group_list.len());
 
     // Each view must know about its parent's other views to link to them
     // So first render the links into 'view_links'
-    let view_count = shared_view_metadata.len();
+    let view_count = shared_metadata.len();
     let mut linker_metadata = Vec::with_capacity(view_count);
-    for (_, j, _, _, view_data) in walk(shared_view_metadata) {
+    for (_, j, _, _, view_data) in walk(shared_metadata) {
         let path = &input_list[j];
         let frontmatter = Frontmatter::new(
             view_data.frontmatter_string.as_str(),
@@ -337,8 +390,12 @@ fn linker_metadata_list_new<'path, 'lang_group_list, 'shared>(
     linker_metadata
 }
 
+fn output_target(config: &RequiredConfigs, linker_view_metadata: &LinkerViewMetadata) -> String {
+    [config.public_dir, "/", linker_view_metadata.relative_output_loc.as_str()].join("")
+}
+
 fn join_partials(
-    (config, input_list, shared_view_metadata): Shared,
+    (config, input_list, shared_metadata): Shared,
     changelog: &UpdateTimes,
     linker_metadata: &[LinkerViewMetadata],
 ) {
@@ -346,10 +403,10 @@ fn join_partials(
     //std::process::exit(0);
 
     // Run the linker to join the partials (toc and doc)
-    for (i, j, _, post_range, shared) in walk(shared_view_metadata) {
+    for (i, j, _, post_range, shared) in walk(shared_metadata) {
         let post_data = &linker_metadata[post_range];
         let my_data = &linker_metadata[i];
-        let target = [config.public_dir, "/", my_data.relative_output_loc.as_str()].join("");
+        let target = output_target(config, my_data);
         let input_path_obj = &input_list[j];
         let output_path = Path::new(target.as_str());
         let is_target_missing_or_outdated = PathReadMetadata::wrap(output_path)
@@ -369,7 +426,7 @@ fn join_partials(
             let args = fmt_linker_args(
                 config,
                 target.as_str(),
-                &shared_view_metadata[i],
+                &shared_metadata[i],
                 post_data,
                 my_data,
             );
@@ -404,13 +461,17 @@ fn join_partials(
     }
 }
 
+const DELETE: bool = false;
+const UPDATE: bool = true;
+
 fn write_caches(
-    (config, input_list, shared_view_metadata): Shared,
+    (config, input_list, shared_metadata): Shared,
     changelog: &UpdateTimes,
     linker_metadata: &[LinkerViewMetadata],
+    is_update: bool,
 ) {
     debug_assert_eq!(changelog.0.len(), input_list.len());
-    debug_assert_eq!(shared_view_metadata.len(), linker_metadata.len());
+    debug_assert_eq!(shared_metadata.len(), linker_metadata.len());
 
     // Could not figure out lifetimes for doing this in a loop
     // 1. The read-filter step is the same for all caches
@@ -444,14 +505,17 @@ fn write_caches(
             @to_add_line_count $to_add:ident,
             @id_index_in_cache $id_index:literal,
 
-            $insert:expr;
+            if $is_update:ident then
+                $insert:expr;
             $msg:literal
         ) => {
             let loc = $loc;
             let mut old = String::new();
             let (capacity, mut cache) =
                 read_old_and_sieve(&$id_map, loc, &mut old, $to_add, $id_index);
-            cache.extend($insert);
+            if $is_update {
+                cache.extend($insert);
+            }
             eprintln!($msg, loc.escape());
             write_after_add(capacity, cache, loc);
         };
@@ -467,7 +531,7 @@ fn write_caches(
     for path in input_list {
         id_map.insert(path.stem, ());
     }
-    let has_any_change = shared_view_metadata.iter().any(|data| data.is_outdated);
+    let has_any_change = shared_metadata.iter().any(|data| data.is_outdated);
     let view_count = linker_metadata.len();
 
     if config.force || has_any_change {
@@ -491,10 +555,12 @@ fn write_caches(
             @to_add_line_count tag_line_count,
             @id_index_in_cache 2,
 
-            linker_metadata
-                .iter()
-                .flat_map(|data| data.tags_cache_lines.iter().map(String::as_str))
-                .map(Cow::Borrowed);
+            if is_update then
+                linker_metadata
+                    .iter()
+                    .flat_map(|data| data.tags_cache_lines.iter().map(String::as_str))
+                    .map(Cow::Borrowed);
+
             "Saving tags cache to {}"
         }
 
@@ -506,12 +572,14 @@ fn write_caches(
             @to_add_line_count view_count,
             @id_index_in_cache 0,
 
-            linker_metadata
-                .iter()
-                // @FORMAT
-                .map(|d| [d.id, d.lang, d.relative_output_loc.as_str()])
-                .map(|array| array.join(","))
-                .map(Cow::Owned);
+            if is_update then
+                linker_metadata
+                    .iter()
+                    // @FORMAT
+                    .map(|d| [d.id, d.lang, d.relative_output_loc.as_str()])
+                    .map(|array| array.join(","))
+                    .map(Cow::Owned);
+
             "Saving link cache to {}"
         }
 
@@ -527,10 +595,12 @@ fn write_caches(
             @to_add_line_count series_line_count,
             @id_index_in_cache 2,
 
-            linker_metadata
-                .iter()
-                .flat_map(|data| data.series_cache_lines.iter().map(String::as_str))
-                .map(Cow::Borrowed);
+            if is_update then
+                linker_metadata
+                    .iter()
+                    .flat_map(|data| data.series_cache_lines.iter().map(String::as_str))
+                    .map(Cow::Borrowed);
+
             "Saving series cache to {}"
         }
 
@@ -615,10 +685,6 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
 struct UpdateTimes<'log>(HashMap<&'log str, DateTime<Utc>>);
 
 impl<'log> UpdateTimes<'log> {
-    fn new_empty() -> Self {
-        Self(HashMap::new())
-    }
-
     fn new(log_str: &'log str) -> Result<Self, ParseError> {
         let mut log = HashMap::with_capacity(log_str.lines().count());
         //eprintln!("{:?}", log_str.lines().collect::<Vec<_>>());
@@ -638,7 +704,7 @@ impl<'log> UpdateTimes<'log> {
 
             let timestr = &timestr_with_comma[','.len_utf8()..];
             let timestamp = NaiveDateTime::parse_from_str(timestr, "%s")
-                .map_err(|err| ParseError::from((i + 1, line, Cow::Owned(err.to_string()))))?;
+                .map_err(|err| (i + 1, line, Cow::Owned(err.to_string())))?;
             log.insert(id, Utc.from_utc_datetime(&timestamp));
         }
         Ok(Self(log))
@@ -654,8 +720,12 @@ impl<'log> UpdateTimes<'log> {
     fn update(&mut self, id: &PathReadMetadata<'log>) {
         self.0.insert(id.stem, Utc::now());
     }
+    fn remove(&mut self, id: &PathReadMetadata) -> Option<DateTime<Utc>> {
+        self.0.remove(id.stem)
+    }
 
     const MAX_DIGITS: usize = "-9223372036854775808".len();
+
 
     fn write_to(&self, loc: &str) -> Result<(), String> {
         debug_assert_eq!(i64::MIN, -9223372036854775808);
@@ -715,13 +785,26 @@ fn read_file(path: &Path, buffer: &mut String) -> Result<usize, String> {
 fn write_file(loc: &str, buffer: &str) -> Result<(), String> {
     fs::write(loc, buffer).map_err(|err| {
         [
-            "Cannot write to ",
+            "Cannot write to file ",
             loc.escape().as_str(),
             ". ",
             err.to_string().as_str(),
         ]
         .join("")
     })
+}
+
+fn delete_file(loc: &str) -> Result<(), String> {
+    fs::remove_file(loc).map_err(|err| {
+        [
+            "Cannot delete file ",
+            loc.escape().as_str(),
+            ". ",
+            err.to_string().as_str(),
+        ]
+        .join("")
+    })
+
 }
 
 /******************************************************************************

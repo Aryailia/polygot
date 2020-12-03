@@ -22,7 +22,7 @@ mod helpers;
 mod post;
 mod traits;
 
-use compile::compile;
+use compile::{compile, delete};
 use helpers::{program_name, PathReadMetadata};
 use traits::{ResultExt, ShellEscape, VecExt};
 
@@ -185,10 +185,10 @@ fn main() {
         }
 
         2, "compile-markup" => {
-            let source = args.get(1).unwrap();
+            let input_pathstr = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
 
-            let input_path = Path::new(source.as_str());
+            let input_path = Path::new(input_pathstr.as_str());
             let input = PathReadMetadata::wrap(input_path).or_die(1);
             compile(&unwrapped_config, &[input]);
         }
@@ -205,6 +205,16 @@ fn main() {
 
             compile(&unwrapped_config, input_list.as_slice());
         }
+
+        2, "delete-generated" => {
+            let target_loc = args.get(1).unwrap();
+            let unwrapped_config = RequiredConfigs::unwrap(&config);
+
+            let target_path = Path::new(target_loc.as_str());
+            let target = PathReadMetadata::wrap(target_path).or_die(1);
+            delete(&unwrapped_config, &[target]);
+
+        }
     });
 }
 
@@ -213,7 +223,7 @@ fn main() {
 //    eprintln!()
 //}
 
-//run: ../../make.sh build-rust clean build
+//run: ../../make.sh build-rust test
 
 fn sync_last_updated(first: &str, date_source: &str) -> ! {
     Path::new(date_source)
@@ -388,7 +398,7 @@ mod integration_tests {
     fn compile_test() {
         let post = Post::new("hello", "//").or_die(1);
         let view = post.views.first().unwrap();
-        let api = FileApi::from_filename("config/api/", "adoc", ("", "blog")).or_die(1);
+        let api = FileApi::from_filename("config/api/", "adoc").or_die(1);
         let frontmatter_string = api.frontmatter(view.body.as_slice()).unwrap();
         let frontmatter =
             Frontmatter::new(frontmatter_string.as_str(), Utc::now(), Utc::now()).or_die(1);
