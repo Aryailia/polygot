@@ -24,6 +24,7 @@ pub enum Value<'a> {
 //}
 
 // @TODO change year month day to date format
+// @FORMAT
 const KEY_BLACKLIST: [&str; 5] = ["file_stem", "lang", "year", "month", "day"];
 
 #[derive(Debug)]
@@ -31,7 +32,6 @@ pub struct Frontmatter<'frontmatter_string> {
     // This instead of two vec's as key and value lengths must be the same
     keys: Vec<&'frontmatter_string str>,
     values: Vec<Value<'frontmatter_string>>,
-    tags: Vec<&'frontmatter_string str>,
 }
 
 // @TODO: Maybe change use a proper JSON parser?
@@ -45,7 +45,10 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
         let keyval_count = validate_and_count(frontmatter)? + 2;
         let mut key_list = Vec::with_capacity(keyval_count);
         let mut value_list = Vec::with_capacity(keyval_count);
+
+        // For checking for duplicates
         let mut tag_list = Vec::new();
+        let mut series_list = Vec::new();
 
         for (i, line) in frontmatter
             .lines()
@@ -58,6 +61,7 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
 
             if KEY_BLACKLIST.iter().any(|k| *k == key) {
                 error_invalid(i + 1, line, key, "is reserved")?;
+
             } else if key_list.contains(&key) {
                 // @TODO: Change to a warning
                 error_invalid(
@@ -66,10 +70,7 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
                     key,
                     "was already defined. Cannot have duplicates.",
                 )?;
-            // @TODO add this check for series as well
-            } else if key == "tags" {
-                parse_tags_and_push(&mut tag_list, val_str, &[], true)
-                    .map_err(|err| (i + 1, line, Cow::Owned(err)))?;
+
             } else if key == "date-created" || key == "date-updated" {
                 key_list.push_and_check(key);
                 let date = DateTime::parse_from_rfc2822(val_str).map_err(|err| {
@@ -89,9 +90,19 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
                     )
                 })?;
                 value_list.push_and_check(Value::DateTime(date.with_timezone(&Utc)));
+
             } else {
                 key_list.push_and_check(key);
                 value_list.push_and_check(Value::Utf8(val_str));
+            }
+
+            // @TODO add this check for series as well
+            if key == "tags" {
+                parse_tags_and_push(&mut tag_list, val_str, &[], true)
+                    .map_err(|err| (i + 1, line, Cow::Owned(err)))?;
+            } else if key == "series" {
+                parse_tags_and_push(&mut series_list, val_str, &[], true)
+                    .map_err(|err| (i + 1, line, Cow::Owned(err)))?;
             }
         }
         // Default have 'date-modified' and 'date-updated'
@@ -112,7 +123,6 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
         Ok(Self {
             keys: key_list,
             values: value_list,
-            tags: tag_list,
         })
     }
 
@@ -201,10 +211,13 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
         // @TODO: elevate to only generate once (store in frontmatter?)
         // probably do not want to randomly benchmark in the user-facing code
         let (created, title) = self.title_and_created();
-        let mut lines = Vec::with_capacity(self.tags.len());
-        let to_add = self.tags
-            .iter()
-            .map(|tag| [*tag, created.as_str(), file_stem, lang, title].join(","));
+        let tags = match self.lookup("tags") {
+            Some(Value::Utf8(s)) => s,
+            _ => "",
+        };
+        let mut lines = Vec::with_capacity(tags.split_whitespace().count());
+        let to_add = tags.split_whitespace()
+            .map(|tag| [tag, created.as_str(), file_stem, lang, title].join(","));
         lines.extend(to_add);
 
         // @TODO validate that this contains no commas up to title
@@ -228,8 +241,6 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
         lines
     }
 
-
-
     fn title_and_created(&self) -> (String, &str) {
         let created = match self.lookup("date-created") {
             Some(Value::DateTime(dt)) => dt,
@@ -251,40 +262,17 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
         assert!(len == self.values.len());
 
         // Four per line (key, delimiter, value, newline)
-        let mut meta_keyvals = Vec::with_capacity(
-            len * 4               // key, colon, value, newline
-            + self.tags.len() * 2 // " " and tag
-            + 1                   // 'tags:' and '\n'
-            + if self.tags.is_empty() {
-                1
-            } else {
-                0                 // - 1 for trimming leading space on tags
-            },
-        );
-
-        meta_keyvals.push_and_check(Cow::Borrowed("tags:"));
-        let mut not_first = false;
-        for tag in &self.tags {
-            if not_first {
-                meta_keyvals.push_and_check(Cow::Borrowed(" "));
-            }
-            not_first = true;
-            meta_keyvals.push_and_check(Cow::Borrowed(tag));
-        }
-        meta_keyvals.push_and_check(Cow::Borrowed("\n"));
-
-        for i in 0..len {
-            meta_keyvals.push_and_check(Cow::Borrowed(self.keys[i]));
+        let mut meta_keyvals = Vec::with_capacity(len * 4);
+        for (key, val) in self.keys.iter().zip(self.values.iter()) {
+            meta_keyvals.push_and_check(Cow::Borrowed(*key));
             meta_keyvals.push_and_check(Cow::Borrowed(":"));
-            meta_keyvals.push_and_check(match &self.values[i] {
-                Value::Utf8(s) => Cow::Borrowed(s),
-                // Date is the only owned entry
-                Value::DateTime(datetime) => datetime.to_rfc2822().into(),
+            meta_keyvals.push_and_check(match val {
+                Value::Utf8(s) => Cow::Borrowed(*s),
+                Value::DateTime(dt) => Cow::Owned(dt.to_rfc2822()),
             });
             meta_keyvals.push_and_check(Cow::Borrowed("\n"));
         }
 
-        debug_assert_eq!(meta_keyvals.len(), meta_keyvals.capacity());
         // join should be allocating the right size, probably
         meta_keyvals.join("")
     }
@@ -358,7 +346,7 @@ mod frontmatter_test {
 
     #[test]
     fn test() {
-        let api = FileApi::from_filename("config/api", "adoc", ("", "blog")).unwrap();
+        let api = FileApi::from_filename("config/api", "adoc").unwrap();
         let pathstr = "config/published/chinese_tones.adoc";
 
         let file = std::fs::read_to_string(pathstr).unwrap();
