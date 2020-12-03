@@ -66,6 +66,7 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
                     key,
                     "was already defined. Cannot have duplicates.",
                 )?;
+            // @TODO add this check for series as well
             } else if key == "tags" {
                 parse_tags_and_push(&mut tag_list, val_str, &[], true)
                     .map_err(|err| (i + 1, line, Cow::Owned(err)))?;
@@ -196,10 +197,41 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
     // The order of this out is designed to make the view tags easier
     // Desired order is to sort by tags, then by date, then by name
     // The language acts as a filter, the title is displayed
-    pub fn format_to_tag_cache(&self, file_stem: &str, lang: &str) -> String {
+    pub fn format_to_tag_cache(&self, file_stem: &str, lang: &str) -> Vec<String> {
         // @TODO: elevate to only generate once (store in frontmatter?)
         // probably do not want to randomly benchmark in the user-facing code
-        let date = match self.lookup("date-created") {
+        let (created, title) = self.title_and_created();
+        let mut lines = Vec::with_capacity(self.tags.len());
+        let to_add = self.tags
+            .iter()
+            .map(|tag| [*tag, created.as_str(), file_stem, lang, title].join(","));
+        lines.extend(to_add);
+
+        // @TODO validate that this contains no commas up to title
+        lines
+    }
+
+    pub fn format_to_series_cache(&self, file_stem: &str, lang: &str) -> Vec<String> {
+        let (created, title) = self.title_and_created();
+        let series = match self.lookup("series") {
+            Some(Value::Utf8(s)) => s,
+            _ => "",
+        };
+
+        let mut lines = Vec::with_capacity(series.split_whitespace().count());
+        let to_add = series.split_whitespace().map(|series_label|
+            // @FORMAT
+            [series_label, created.as_str(), file_stem, lang, title].join(","));
+        lines.extend(to_add);
+
+        // @TODO validate that this contains no commas up to title
+        lines
+    }
+
+
+
+    fn title_and_created(&self) -> (String, &str) {
+        let created = match self.lookup("date-created") {
             Some(Value::DateTime(dt)) => dt,
             _ => unreachable!("'date-created' must exist and be a datetime"),
         }
@@ -210,14 +242,7 @@ impl<'frontmatter_string> Frontmatter<'frontmatter_string> {
             Some(Value::DateTime(_)) => unreachable!("'title' is always UTF8"),
             None => "",
         };
-
-        let mut tag_line_list = Vec::with_capacity(self.tags.len());
-        tag_line_list.extend(
-            self.tags
-                .iter()
-                .map(|tag| [*tag, date.as_str(), file_stem, lang, title].join(",")),
-        );
-        tag_line_list.join("\n")
+        (created, title)
     }
 
     // Serialising 'api_entries' here as well simply for code consolidation

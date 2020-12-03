@@ -28,6 +28,9 @@ macro_rules! zip {
 // @TODO cli subcommands for running linker and compile step individually
 // @TODO cli subcommand for verify valid url links
 // @TODO validate url for output_format, post ids
+// @TODO add validation that series labels do not have invalid characters
+// @TODO add default language
+// @TODO add language choice to navbar.sh
 
 //run: ../../make.sh build build-rust -f
 // run: cargo test compile -- --nocapture
@@ -187,11 +190,7 @@ fn analyse_metadata<'config, 'text, 'path>(
     for (path, text) in zip!(input_paths, text_list) {
         let extension = path.extension;
         if !api_and_comment.contains_key(extension) {
-            let api = FileApi::from_filename(
-                config.api_dir,
-                extension,
-            )
-            .or_die(1);
+            let api = FileApi::from_filename(config.api_dir, extension).or_die(1);
             let comment = api.comment().or_die(1);
             api_and_comment.insert(extension, (api, comment));
         }
@@ -302,8 +301,8 @@ fn htmlify_into_partials<'input>(
 struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
     id: &'shared str,
     frontmatter_serialised: String,
-    series_list: &'frontmatter_string str,
-    tags_cache_line: String,
+    series_cache_lines: Vec<String>,
+    tags_cache_lines: Vec<String>,
     lang: &'lang_group_list str,
     relative_output_loc: String,
     title: &'frontmatter_string str,
@@ -336,11 +335,8 @@ fn join_partials(
 
         linker_metadata.push_and_check(LinkerViewMetadata {
             frontmatter_serialised: frontmatter.serialise(),
-            tags_cache_line: frontmatter.format_to_tag_cache(path.stem, lang),
-            series_list: match frontmatter.lookup("series") {
-                Some(Value::Utf8(s)) => s,
-                _ => "",
-            },
+            tags_cache_lines: frontmatter.format_to_tag_cache(path.stem, lang),
+            series_cache_lines: frontmatter.format_to_series_cache(path.stem, lang),
             lang,
             relative_output_loc: frontmatter.format(config.output_format, path.stem, lang),
             id: path.stem,
@@ -434,9 +430,9 @@ fn write_caches(
     debug_assert_eq!(shared_view_metadata.len(), linker_metadata.len());
 
     // Could not figure out lifetimes for doing this in a loop
-    // 1. The read, sort, filter are same for all caches
-    // 2. The insert step is different
-    // 3. The write step is the same for all caches
+    // 1. The read-filter step is the same for all caches
+    // 2. The insert step is unique to each cache
+    // 3. The sort-then-write step is the same for all caches
     fn read_old_and_sieve<'a>(
         id_map: &HashMap<&str, ()>,
         pathstr: &str,
@@ -495,18 +491,32 @@ fn write_caches(
         eprintln!("Saving file update times to {}", config.changelog.escape());
         changelog.write_to(config.changelog.as_str()).or_die(1);
 
+        // @FORMAT
+        // Specifically separating path and path so csv can support
+        // This means the only invalid character is newline
+        // Frontmatter makes sure to format date without commas
+
+        // @FORMAT tags cache
+        // Last column is title (only column that could have commas as data)
+        let tag_line_count = linker_metadata
+            .iter()
+            .map(|data| data.tags_cache_lines.len())
+            .sum();
         update_cache! {
             @id_list_to_add    id_map,
             @location          config.tags_cache.as_str(),
-            @to_add_line_count view_count,
+            @to_add_line_count tag_line_count,
             @id_index_in_cache 2,
 
             linker_metadata
                 .iter()
-                .flat_map(|data| data.tags_cache_line.split('\n'))
+                .flat_map(|data| data.tags_cache_lines.iter().map(String::as_str))
                 .map(Cow::Borrowed);
             "Saving tags cache to {}"
         }
+
+        // @FORMAT link cache
+        // Last column is path (only column that could have commas as data)
         update_cache! {
             @id_list_to_add    id_map,
             @location          config.link_cache.as_str(),
@@ -515,27 +525,29 @@ fn write_caches(
 
             linker_metadata
                 .iter()
-                .map(|d| [d.id, d.lang, d.relative_output_loc.as_str(), d.title])
+                // @FORMAT
+                .map(|d| [d.id, d.lang, d.relative_output_loc.as_str()])
                 .map(|array| array.join(","))
                 .map(Cow::Owned);
             "Saving link cache to {}"
         }
 
-        let count = linker_metadata
+        // @FORMAT series cache
+        // Last column is title (only column that could have commas as data)
+        let series_line_count = linker_metadata
             .iter()
-            .map(|data| data.series_list.split_whitespace().count())
+            .map(|data| data.series_cache_lines.len())
             .sum();
         update_cache! {
             @id_list_to_add    id_map,
             @location          config.series_cache.as_str(),
-            @to_add_line_count count,
-            @id_index_in_cache 1,
+            @to_add_line_count series_line_count,
+            @id_index_in_cache 2,
 
             linker_metadata
                 .iter()
-                .flat_map(|data| data.series_list.split_whitespace()
-                    .map(move |series_name| [series_name, data.id].join(",")))
-                .map(Cow::Owned);
+                .flat_map(|data| data.series_cache_lines.iter().map(String::as_str))
+                .map(Cow::Borrowed);
             "Saving series cache to {}"
         }
 
@@ -595,7 +607,6 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
         Cow::Owned(["local_doc_path:", shared.doc_loc.as_str()].join("")),
         Cow::Owned(["local_output_path:", local_target].join("")),
         Cow::Owned(["relative_output_url:", relative_target].join("")),
-        //Cow::Owned(["relative_tags_url:", data.tags_loc.as_str()].join("")),
         Cow::Owned([
             "other_view_langs:",
             data.other_langs.0,

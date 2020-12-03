@@ -26,6 +26,9 @@ api_lookuP() {
 }
 post_lookuP() { dehasH "${post_hash_table}" "${1}";  }
 
+
+# This if else is primarily for development
+# Change this to `if true` and comment out the '>' after `<<EOF cat -`
 if false; then
 post_hash_table="
 title:平聲入去四聲是什麼：上古、中古、和現代的聲調演變
@@ -132,7 +135,6 @@ $( spaces="    "
     <div>
 $( spaces="      "
   if [ -n "${other_view_langs}" ]; then
-    
     printf %s\\n "${spaces}<div>"
     printf %s\\n "${spaces}  <div><b>Other Languages:</b></div>"
     for lang in ${other_view_langs}; do
@@ -150,29 +152,17 @@ $( spaces="      "
 $( spaces="      "
   if [ -n "${series_list}" ]; then
     printf '%s%s\n' "${spaces}" "<div><b>Series:</b></div>"
-    for series in ${series_list}; do
-      list="$( <"${series_cache}" sed -n "/^${series},/ {s/^[^,]*,//p}" )"
-
-      # Get one entry per id, preferring the entires with ${language}
-      <"${link_cache}" awk -v FS=',' -v lang="${language}" -v filter="${list}" '
-        BEGIN {
-          # parse "filter" into a hash (associative array)
-          len = split(filter, file_list, "\n");
-          for (i = 1; i <= len; ++i) {
-            file_hash[file_list[i]] = 1;
-          }
-          len = 0;
-        }
-
-        # filter for the ids in the series
-        file_hash[$1] {
-          if (seen[$1]) {
-            if ($2 == lang) {
+    for label in ${series_list}; do
+      # @FORMAT series lable, time, id, lang, title
+      <"${series_cache}" awk -v FS=',' -v label="${label}" -v lang="${language}" '
+        $1 == label {
+          if (seen[$3]) {
+            if ($4 == lang) {
               cache[len] = $0;
             }
             next;
           } else {
-            senn[$1] = 1;
+            senn[$3] = 1;
             cache[++len] = $0;
           }
         }
@@ -182,19 +172,34 @@ $( spaces="      "
             print cache[i];
           }
         }
-      ' | {
-        printf '%s%s\n' "${spaces}" "<div>${series}"
-        printf '%s%s\n' "${spaces}" "<ul>"
-        while IFS=',' read -r lc_id lc_lang lc_path lc_title; do
-          printf '%s' "${spaces}<li>"
-          if [ "${lc_path}" = "${relative_output_url}" ]; then
-            printf '  <span>%s</span>' "${lc_title}"
+      ' | sort | {
+
+        printf %s\\n "${spaces}<div><p>${label}</p>"
+        printf %s\\n "${spaces}  <ul>"
+
+        while IFS=',' read -r label time id lang title; do
+          # @FORMAT
+          path="$( awk -v FS=',' -v id="${id}" -v lang="${lang}" '
+            $1 == id && $2 == lang {
+              printf "%s", $3;
+              # In case title has commas, print them
+              for (i = 4; i <= NF; ++i) {
+                printf ",%s", $(i);
+              }
+            }
+          ' "${link_cache}" )"
+
+          printf %s  "${spaces}     <li>"
+          if [ "${path}" = "${relative_output_url}" ]; then
+            printf '<span>%s</span>' "${title}"
           else
-            printf '  <a href="%s">%s</a>' "${domain}/${lc_path}" "${lc_title}"
+            printf '<a href="%s">%s</a>' "${domain}/${path}" "${title}"
           fi
           printf %s\\n "</li>"
         done
-        printf '%s%s\n' "${spaces}" "</ul></div>"
+
+        printf %s\\n "${spaces}  </ul>"
+        printf %s\\n "${spaces}</div>"
       }
     done
   fi

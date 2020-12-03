@@ -59,7 +59,7 @@ select_and_format() {
   # $2: the preferred language
   # $3: the title to print
   rest=''
-  while IFS=',' read lc_id lc_lang lc_path lc_title; do
+  while IFS=',' read lc_id lc_lang lc_path; do
     if [ "${lc_id}" = "${1}" ]; then
       format "$@"
 
