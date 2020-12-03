@@ -37,6 +37,7 @@ series:Terminal
 "
 set -- \
   "domain:${HOME}/interim/bl/website/public" \
+  "blog_relative:blog" \
   "link_cache:${HOME}/interim/bl/website/.cache/link.csv" \
   "series_cache:${HOME}/interim/bl/website/.cache/series.csv" \
   "language:zh" \
@@ -66,6 +67,7 @@ NEWLINE='
 
 # Declare before to get the exits
              domain="$( api_lookuP "domain" "$@" )" || exit 1
+      blog_relative="$( api_lookuP "blog_relative" "$@" )" || exit 1
          link_cache="$( api_lookuP "link_cache" "$@" )" || exit 1
        series_cache="$( api_lookuP "series_cache" "$@" )" || exit 1
            language="$( api_lookuP "language" "$@" )" || exit 1
@@ -122,7 +124,7 @@ $( spaces="    "
   for hashtag in ${tags}; do
     printf '%s<div class="hashtag"><a href="%s">%s</a></div>\n' \
       "${spaces}" \
-      "${domain}/${BLOG_RELATIVE}/tags-${language}.html#${hashtag}" \
+      "${domain}/${blog_relative}/tags-${language}.html#${hashtag}" \
       "#${hashtag}" \
     # end. Use 'tags.html' instead of '${domain}/${relative_tags_url}'?
   done

@@ -4,21 +4,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Debug)]
-pub struct FileApi<'a> {
+pub struct FileApi {
     pathbuf: PathBuf,
-    env: Env<'a>,
 }
 
-type Env<'a> = (&'a str, &'a str);
 type Output = Result<String, String>;
 
-impl<'a> FileApi<'a> {
-    pub fn from_filename(api_dir: &str, extension: &str, env: Env<'a>) -> Result<Self, String> {
+impl FileApi {
+    pub fn from_filename(api_dir: &str, extension: &str) -> Result<Self, String> {
         let command = Path::new(api_dir).join(Path::new(extension));
         if command.is_file() {
             Ok(Self {
                 pathbuf: command,
-                env,
             })
         } else {
             Err([
@@ -34,27 +31,28 @@ impl<'a> FileApi<'a> {
     // These three lines are the what each file extension API must implement
     #[inline]
     pub fn comment(&self) -> Output {
-        command_run(self.pathbuf.as_path(), self.env, None, &["comment"])
+        command_run(self.pathbuf.as_path(), None, &["comment"])
     }
     #[inline]
-    pub fn compile(&self, stdin: &[&str], toc_location: &str, body_location: &str) -> Output {
+    pub fn compile(&self, stdin: &[&str], domain: &str, toc_location: &str, body_location: &str) -> Output {
         command_run(
             self.pathbuf.as_path(),
-            self.env,
             Some(stdin),
-            &["compile", toc_location, body_location],
+            &["compile", domain, toc_location, body_location],
         )
     }
     #[inline]
     pub fn frontmatter(&self, stdin: &[&str]) -> Output {
-        command_run(self.pathbuf.as_path(), self.env, Some(stdin), &["frontmatter"])
+        command_run(
+            self.pathbuf.as_path(),
+            Some(stdin),
+            &["frontmatter"],
+        )
     }
 }
 
-pub fn command_run(cmd_path: &Path, env: Env, stdin: Option<&[&str]>, args: &[&str]) -> Output {
+pub fn command_run(cmd_path: &Path, stdin: Option<&[&str]>, args: &[&str]) -> Output {
     let mut child = Command::new(cmd_path)
-        .env("DOMAIN", env.0)
-        .env("BLOG_RELATIVE", env.1)
         .args(args)
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -62,6 +60,7 @@ pub fn command_run(cmd_path: &Path, env: Env, stdin: Option<&[&str]>, args: &[&s
             Stdio::null()
         })
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| {
             [
@@ -109,6 +108,14 @@ pub fn command_run(cmd_path: &Path, env: Env, stdin: Option<&[&str]>, args: &[&s
         .join("")
     })?;
     if output.status.success() {
+        std::io::stderr().write_all(&output.stderr).map_err(|err| {
+            [
+                "Could to write to stderr while executing ",
+                cmd_path.to_string_lossy().escape().as_str(),
+                err.to_string().as_str(),
+            ]
+            .join("")
+        })?;
         String::from_utf8(output.stdout).map_err(|_| {
             [
                 cmd_path.to_string_lossy().escape().as_str(),

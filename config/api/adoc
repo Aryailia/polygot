@@ -2,25 +2,14 @@
 
 #export adoc_sourced=true
 
-#adoc_compile() {
-#  # &0: 
-#  # $1: Write path to table-of-contents file hunk
-#  # $2: Write path to main-content file hunk
-#
-#  # Probably should use `adoc_include_by_tag` instead of printing an include
-#  <&0 asciidoctor - --out-file - \
-#      --attribute toc --attribute toc-title="" \
-#      --no-header-footer \
-#    | adoc_Split2 "${1}" "${2}"
-#}
-
 adoc_To_htmL() {
   # &0: Post
+  # $1: domain
   <&0 asciidoctor - --out-file - \
     --attribute toc --attribute toc-title="" \
     --attribute source-highlighter='pygments' \
     --attribute 'webfonts!' \
-    --attribute imagesdir="${DOMAIN}/images" \
+    --attribute imagesdir="${1}/images" \
     --no-header-footer
   pygments_theme
 }
@@ -80,7 +69,7 @@ adoc_Split() {
 
 pygments_theme() {
   # https://github.com/jwarby/jekyll-pygments-themes/blob/master/vs.css
-  # vs theme
+  # Or compile a post (with headers) and just copy-paste
   <<EOF cat -
 <style>
 pre.pygments .tok-hll { background-color: #ffffcc }
@@ -120,9 +109,6 @@ pre.pygments .tok-ss { color: #a31515 } /* Literal.String.Symbol */
 EOF
 }
 
-
-
-
 case "${1}"
   in frontmatter)
     <&0 sed -ne '/^:[A-Za-z0-9_-]\+:/{
@@ -131,26 +117,9 @@ case "${1}"
       s/: */:/
       p
     }'
-  ;; compile) <&0 adoc_To_htmL | adoc_Split "${2}" "${3}"
-  ;; to_html) <&0 adoc_To_htmL
+  ;; compile) <&0 adoc_To_htmL "${2}" | adoc_Split "${3}" "${4}"
+  ;; to_html) <&0 adoc_To_htmL "${2}"
   ;; split)   <&0 adoc_Split "${2}" "${3}"
   ;; comment) printf '//'
   ;; *)     exit 1
 esac
-#<"${1}" adoc_Split a b
-
-#split() {
-#   printf %s "${_adoc_split_line}"
-#  printf %s\\n "${_adoc_split_count}"
-#  _length="$( awk '
-#    /^<div id="toc" .*>$/ { start = 1; }
-#    (start && count >= 0) {
-#      temp = $0;
-#      count = count + gsub(/<div/, "", temp) - gsub(/<\/div *>/, "", temp)
-#    }
-#    (start && count <= 0) { print NR; exit; }
-#  ' )"
-#  [ -z "${_length}" ] && { printf %s\\n "No table of contents found"; exit 1; }
-#  sed "${_length}q" "${1}"
-#  sed "1,${_length}d" "${1}"
-#}

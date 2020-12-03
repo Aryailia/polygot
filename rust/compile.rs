@@ -24,10 +24,8 @@ macro_rules! zip {
 // @TODO Add spacing between different compile steps, make a print vec function
 // @TODO cli subcommand for delete file
 // @TODO cli subcommand for rename file
-// @TODO remove DOMAIN from api/adoc (add as arg) and 'command_run'
 // @TODO support for light and dark modes
 // @TODO cli subcommands for running linker and compile step individually
-// @TODO 'command_run' does not capture stdout stderr
 // @TODO cli subcommand for verify valid url links
 // @TODO validate url for output_format, post ids
 
@@ -120,7 +118,7 @@ struct ViewMetadata {
     toc_loc: String,
     doc_loc: String,
 }
-type ApiAndComment<'path, 'config> = HashMap<&'path str, (FileApi<'config>, String)>;
+type ApiAndComment<'path> = HashMap<&'path str, (FileApi, String)>;
 
 // Using this so that we can discard 'api_and_comment' and 'text_list'
 struct ViewMetadataWalker<'a> {
@@ -173,7 +171,7 @@ fn analyse_metadata<'config, 'text, 'path>(
     input_paths: &[PathReadMetadata<'path>],
 ) -> (
     Vec<ViewMetadata>,
-    ApiAndComment<'path, 'config>,
+    ApiAndComment<'path>,
     Vec<Post<'text>>,
     Vec<String>,
 ) {
@@ -192,7 +190,6 @@ fn analyse_metadata<'config, 'text, 'path>(
             let api = FileApi::from_filename(
                 config.api_dir,
                 extension,
-                (config.domain, config.blog_relative),
             )
             .or_die(1);
             let comment = api.comment().or_die(1);
@@ -279,7 +276,7 @@ fn htmlify_into_partials<'input>(
             // @TODO: Create directories in building api cache (less work)
             create_parent_dir(toc_loc).or_die(1);
             create_parent_dir(doc_loc).or_die(1);
-            api.compile(view.body.as_slice(), toc_loc, doc_loc)
+            api.compile(view.body.as_slice(), config.domain, toc_loc, doc_loc)
                 .or_die(1);
 
             changelog.update(path);
@@ -409,13 +406,7 @@ fn join_partials(
             eprintln!("Linking {} {}", my_data.lang, target.escape());
             print!(
                 "{}",
-                command_run(
-                    Path::new(config.linker),
-                    (config.domain, config.blog_relative),
-                    None,
-                    &args,
-                )
-                .or_die(1)
+                command_run(Path::new(config.linker), None, &args).or_die(1)
             );
 
             if config.explicit {
@@ -595,6 +586,7 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
 
         // Remaining args are the api-calculated metadata
         Cow::Owned(["domain:", config.domain].join("")),
+        Cow::Owned(["blog_relative:", config.blog_relative].join("")),
         Cow::Owned(["link_cache:", config.link_cache.as_str()].join("")),
         Cow::Owned(["series_cache:", config.series_cache.as_str()].join("")),
         Cow::Owned(["language:", data.lang].join("")),
