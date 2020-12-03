@@ -127,7 +127,7 @@ impl<'path> PathReadMetadata<'path> {
         );
         let created = FileTime::from_creation_time(meta)
             .map(|filetime| Utc.timestamp(filetime.unix_seconds(), 0))
-            .unwrap_or(Utc.timestamp(0, 0));
+            .unwrap_or_else(|| Utc.timestamp(0, 0));
         // 'chrono::Utc.timestamp' errors at i64::MIN
         //.unwrap_or(Utc.timestamp(i64::MIN, 0));
 
