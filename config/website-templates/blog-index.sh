@@ -39,29 +39,39 @@ outln() { printf %s\\n "$@"; }
     <ul>
 EOF
 
-#run: ../../make.sh test
-LANG_LIST="$( <"${1}" cut -d ',' -f 4 | sort | uniq )"
+#run: ../../../make.sh build
 
+
+format() {
+  # same as 'select_and_format'
+  if [ "${lc_lang}" = "${2}" ]; then
+    # Line head
+    out '<li>'
+    out "<span>${time%% *}</span> "
+    out "<a href=\"${DOMAIN}/${lc_path}\">${3}</a> [${lc_lang}]"
+  else
+    rest="${rest} <a href=\"${DOMAIN}/${lc_path}\">[${lc_lang}]</a>"
+  fi
+}
 
 select_and_format() {
+  # $1: the id of the link to print
+  # $2: the preferred language
+  # $3: the title to print
   rest=''
   while IFS=',' read lc_id lc_lang lc_path lc_title; do
     if [ "${lc_id}" = "${1}" ]; then
-      if [ "${lc_lang}" = "${2}" ]; then
-        # Line head
-        out '<li>'
-        out "<span>${time%% *}</span> "
-        out "<a href=\"${DOMAIN}/${lc_path}\">${3}</a> [${lc_lang}]"
-      else
-        rest="${rest} <a href=\"${DOMAIN}/${lc_path}\">[${lc_lang}]</a>"
-      fi
+      format "$@"
+
     fi
   done
+  if [ "${lc_id}" = "${1}" ]; then
+    format "$@"
+  fi
 
   # Line tail
   out "${rest}"
   out '</li>'
-
 }
 
 <"${TAGS_CACHE}" cut -d ',' -f '2-' | sort -r | awk -v FS=',' -v choice='en' '
@@ -76,7 +86,7 @@ select_and_format() {
       cache[++len] = $0;
     }
   }
-  
+
   END {
     for (i = 1; i <= len; ++i) {
       print cache[i];
