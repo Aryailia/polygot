@@ -157,9 +157,10 @@ define_config! {
         "t" "templates-dir" templates_dir,
     }
     @derived {
-        tags_cache = [cache_dir, "/tags.csv"],
-        link_cache = [cache_dir, "/link.csv"],
-        changelog  = [cache_dir, "/changelog.csv"],
+        tags_cache   = [cache_dir, "/tags.csv"],
+        link_cache   = [cache_dir, "/link.csv"],
+        changelog    = [cache_dir, "/changelog.csv"],
+        series_cache = [cache_dir, "/series.csv"],
     }
 }
 

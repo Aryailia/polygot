@@ -45,7 +45,7 @@ LANG_LIST="$( <"${1}" cut -d ',' -f 4 | sort | uniq )"
 
 select_and_format() {
   rest=''
-  while IFS=',' read lc_id lc_lang lc_path; do
+  while IFS=',' read lc_id lc_lang lc_path lc_title; do
     if [ "${lc_id}" = "${1}" ]; then
       if [ "${lc_lang}" = "${2}" ]; then
         # Line head

@@ -1,12 +1,6 @@
 // This brings the disparate parts together to do the compile pipeline.
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    fs,
-    io::Read,
-    path::Path,
-};
+use std::{borrow::Cow, collections::HashMap, fs, io::Read, path::Path};
 
 use super::RequiredConfigs;
 use crate::{
@@ -28,10 +22,16 @@ macro_rules! zip {
 // @TODO check if we can get away with just using Utc::now() for updating
 //       changelog; that we do not need to read output file updated time
 // @TODO Add spacing between different compile steps, make a print vec function
-// @TODO delete file
-// @TODO rename file
+// @TODO cli subcommand for delete file
+// @TODO cli subcommand for rename file
+// @TODO remove DOMAIN from api/adoc (add as arg) and 'command_run'
+// @TODO support for light and dark modes
+// @TODO cli subcommands for running linker and compile step individually
+// @TODO 'command_run' does not capture stdout stderr
+// @TODO cli subcommand for verify valid url links
+// @TODO validate url for output_format, post ids
 
-//run: ../../make.sh build build-rust
+//run: ../../make.sh build build-rust -f
 // run: cargo test compile -- --nocapture
 
 // A three-major-step build procees
@@ -99,7 +99,6 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     // Frontmatter's lifetime depends on 'shared_view_metadata'
     join_partials(
         config,
-        id_map,
         input_list,
         &changelog,
         &shared_view_metadata,
@@ -261,13 +260,19 @@ fn htmlify_into_partials<'input>(
     for (_, j, is_new_post, _, view_data) in walk(shared_view_metadata) {
         let path = &input_list[j];
         if is_new_post {
-            [path.stem, ".", path.extension].join("").escape_to(&mut buffer);
+            [path.stem, ".", path.extension]
+                .join("")
+                .escape_to(&mut buffer);
         }
 
         let toc_loc = view_data.toc_loc.as_str();
         let doc_loc = view_data.doc_loc.as_str();
 
-        if view_data.is_outdated || !Path::new(toc_loc).exists() || !Path::new(doc_loc).exists() {
+        if config.force
+            || view_data.is_outdated
+            || !Path::new(toc_loc).exists()
+            || !Path::new(doc_loc).exists()
+        {
             let (api, _) = api_and_comment.get(path.extension).unwrap();
             let view = &post_list[j].views[view_data.view_index];
 
@@ -300,6 +305,7 @@ fn htmlify_into_partials<'input>(
 struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
     id: &'shared str,
     frontmatter_serialised: String,
+    series_list: &'frontmatter_string str,
     tags_cache_line: String,
     lang: &'lang_group_list str,
     relative_output_loc: String,
@@ -309,7 +315,6 @@ struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
 
 fn join_partials(
     config: &RequiredConfigs,
-    id_map: HashMap<&str, ()>,
     input_list: &[PathReadMetadata],
     changelog: &UpdateTimes,
     shared_view_metadata: &[ViewMetadata],
@@ -335,6 +340,10 @@ fn join_partials(
         linker_metadata.push_and_check(LinkerViewMetadata {
             frontmatter_serialised: frontmatter.serialise(),
             tags_cache_line: frontmatter.format_to_tag_cache(path.stem, lang),
+            series_list: match frontmatter.lookup("series") {
+                Some(Value::Utf8(s)) => s,
+                _ => "",
+            },
             lang,
             relative_output_loc: frontmatter.format(config.output_format, path.stem, lang),
             id: path.stem,
@@ -346,21 +355,17 @@ fn join_partials(
         });
     }
 
+    //println!("{:#?}", linker_metadata);
+    //std::process::exit(0);
+
     // Must update the cache before linking as linker uses this info
     write_caches(
         config,
-        id_map,
+        input_list,
         &shared_view_metadata,
         changelog,
         &linker_metadata,
     );
-
-    // Format hello
-    // @TODO these should both be sorted
-    // so we can do a better
-    //tags.cache.lines()
-    //    .filter(|line| line.split(',').get(3).unwrap_or("") == )
-    //    .chain()
 
     // Run the linker to join the partials (toc and doc)
     for (i, j, _, post_range, shared) in walk(shared_view_metadata) {
@@ -382,7 +387,7 @@ fn join_partials(
         //    );
         //if true {
         //} else
-        if shared.is_outdated || is_target_missing_or_outdated {
+        if config.force || shared.is_outdated || is_target_missing_or_outdated {
             let args = fmt_linker_args(
                 config,
                 target.as_str(),
@@ -429,65 +434,120 @@ fn join_partials(
 
 fn write_caches(
     config: &RequiredConfigs,
-    id_map: HashMap<&str, ()>,
+    input_list: &[PathReadMetadata],
     shared_view_metadata: &[ViewMetadata],
     changelog: &UpdateTimes,
     linker_metadata: &[LinkerViewMetadata],
 ) {
-    debug_assert_eq!(changelog.0.len(), id_map.len());
+    debug_assert_eq!(changelog.0.len(), input_list.len());
     debug_assert_eq!(shared_view_metadata.len(), linker_metadata.len());
 
-    let has_any_change = shared_view_metadata.iter().any(|data| data.is_outdated);
-    let view_count = linker_metadata.len();
-
-    fn read_and_sieve_in_old<'a>(
+    // Could not figure out lifetimes for doing this in a loop
+    // 1. The read, sort, filter are same for all caches
+    // 2. The insert step is different
+    // 3. The write step is the same for all caches
+    fn read_old_and_sieve<'a>(
         id_map: &HashMap<&str, ()>,
         pathstr: &str,
         old_cache: &'a mut String,
         count: usize,
         id_index: usize,
-    ) -> Vec<Cow<'a, str>> {
+    ) -> (usize, Vec<Cow<'a, str>>) {
         let path = Path::new(pathstr);
         if let Err(err) = read_file(path, old_cache) {
             eprintln!("{}.\n-> Generating {}...", err, pathstr.escape());
         }
 
-        let mut cache = Vec::with_capacity(old_cache.lines().count() + count);
+        // This the max size (if not recompiling old posts)
+        let capacity = old_cache.lines().count() + count;
+        let mut cache = Vec::with_capacity(capacity);
         cache.extend(old_cache.lines().filter_map(|line| {
             let id = line.split(',').nth(id_index).unwrap_or("");
             (!id_map.contains_key(id)).to_some(Cow::Borrowed(line))
         }));
-        cache
+        (capacity, cache)
+    }
+    macro_rules! update_cache {
+        (
+            @id_list_to_add    $id_map:ident,
+            @location          $loc:expr,
+            @to_add_line_count $to_add:ident,
+            @id_index_in_cache $id_index:literal,
+
+            $insert:expr;
+            $msg:literal
+        ) => {
+            let loc = $loc;
+            let mut old = String::new();
+            let (capacity, mut cache) =
+                read_old_and_sieve(&$id_map, loc, &mut old, $to_add, $id_index);
+            cache.extend($insert);
+            eprintln!($msg, loc.escape());
+            write_after_add(capacity, cache, loc);
+        };
+    }
+    fn write_after_add(capacity: usize, mut cache: Vec<Cow<str>>, loc: &str) {
+        debug_assert!(cache.len() <= capacity);
+        cache.sort_unstable();
+        write_file(loc, cache.join("\n").as_str()).or_die(1);
+        //eprintln!("{:#?}\n", cache);
     }
 
-    if has_any_change {
+    let mut id_map = HashMap::with_capacity(input_list.len());
+    for path in input_list {
+        id_map.insert(path.stem, ());
+    }
+    let has_any_change = shared_view_metadata.iter().any(|data| data.is_outdated);
+    let view_count = linker_metadata.len();
+
+    if config.force || has_any_change {
         eprintln!("Saving file update times to {}", config.changelog.escape());
         changelog.write_to(config.changelog.as_str()).or_die(1);
 
-        let mut tags_old = String::new();
-        let tags_loc = config.tags_cache.as_str();
-        let mut tags = read_and_sieve_in_old(&id_map, tags_loc, &mut tags_old, view_count, 2);
-        tags.extend(
-            linker_metadata
-                .iter()
-                .flat_map(|x| x.tags_cache_line.split('\n').map(|x| Cow::Borrowed(x))),
-        );
-        tags.sort_unstable();
-        eprintln!("Saving tags cache to {}", tags_loc.escape());
-        write_file(tags_loc, tags.join("\n").as_str()).or_die(1);
-        //eprintln!("{:#?}\n", tags);
+        update_cache! {
+            @id_list_to_add    id_map,
+            @location          config.tags_cache.as_str(),
+            @to_add_line_count view_count,
+            @id_index_in_cache 2,
 
-        let mut link_old = String::new();
-        let link_loc = config.link_cache.as_str();
-        let mut link = read_and_sieve_in_old(&id_map, link_loc, &mut link_old, view_count, 0);
-        link.extend(
             linker_metadata
                 .iter()
-                .map(|x| Cow::Owned([x.id, x.lang, x.relative_output_loc.as_str()].join(","))),
-        );
-        link.sort_unstable();
-        eprintln!("Saving link cache to {}", link_loc.escape());
-        write_file(link_loc, link.join("\n").as_str()).or_die(1);
+                .flat_map(|data| data.tags_cache_line.split('\n'))
+                .map(Cow::Borrowed);
+            "Saving tags cache to {}"
+        }
+        update_cache! {
+            @id_list_to_add    id_map,
+            @location          config.link_cache.as_str(),
+            @to_add_line_count view_count,
+            @id_index_in_cache 0,
+
+            linker_metadata
+                .iter()
+                .map(|d| [d.id, d.lang, d.relative_output_loc.as_str(), d.title])
+                .map(|array| array.join(","))
+                .map(Cow::Owned);
+            "Saving link cache to {}"
+        }
+
+        let count = linker_metadata
+            .iter()
+            .map(|data| data.series_list.split_whitespace().count())
+            .sum();
+        update_cache! {
+            @id_list_to_add    id_map,
+            @location          config.series_cache.as_str(),
+            @to_add_line_count count,
+            @id_index_in_cache 1,
+
+            linker_metadata
+                .iter()
+                .flat_map(|data| data.series_list.split_whitespace()
+                    .map(move |series_name| [series_name, data.id].join(",")))
+                .map(Cow::Owned);
+            "Saving series cache to {}"
+        }
+
     //eprintln!("{:#?}\n", link);
     } else {
         eprintln!("No change in posts detected, caches unmodified (use --force to override)");
@@ -535,6 +595,8 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
 
         // Remaining args are the api-calculated metadata
         Cow::Owned(["domain:", config.domain].join("")),
+        Cow::Owned(["link_cache:", config.link_cache.as_str()].join("")),
+        Cow::Owned(["series_cache:", config.series_cache.as_str()].join("")),
         Cow::Owned(["language:", data.lang].join("")),
         Cow::Owned(["local_templates_dir:", config.templates_dir].join("")),
         Cow::Owned(["local_toc_path:", shared.toc_loc.as_str()].join("")),
@@ -592,12 +654,6 @@ impl<'log> UpdateTimes<'log> {
         Ok(Self(log))
     }
 
-    fn check_if_outdated2(&self, id: &str, timestamp: &DateTime<Utc>) -> bool {
-        self.0
-            .get(id)
-            .map(|logged_time| timestamp > logged_time)
-            .unwrap_or(true)
-    }
     fn check_if_outdated(&self, id: &PathReadMetadata) -> bool {
         self.0
             .get(id.stem)

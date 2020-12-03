@@ -13,6 +13,7 @@
 :date-created: <!-- INSERT: today -->
 :date-updated: <!-- INSERT: today -->
 :tags:         
+:series:       
 
 // api_set_lang: en
 == First section
