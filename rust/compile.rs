@@ -30,11 +30,16 @@ macro_rules! zip {
 // @TODO validate url for output_format, post ids
 // @TODO add validation that series labels do not have invalid characters
 // @TODO add default language
-// @TODO add language choice to navbar.sh
+// @TODO figure out api for labeling series
 
-//run: ../../make.sh build build-rust -f
+//run: ../../make.sh build test
 // run: cargo test compile -- --nocapture
 
+type Shared<'config, 'path_list, 'path, 'shared> = (
+    &'config RequiredConfigs<'config>,
+    &'path_list [PathReadMetadata<'path>],
+    &'shared [ViewMetadata],
+);
 // A three-major-step build procees
 // 1. Analyse the metadata, process my custom markup
 // 2. Run the markup's compiler (markup->HTML) (Asciidoctor, org, Pandoc, etc.)
@@ -45,13 +50,6 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     // - one lang <> one view
     // - one views <> one toc and one body (one post <> lang_num * 2 sections)
     // - one view <> one linked output file
-
-    // @TODO Handle this in main.rs
-    let file_count = input_list.len();
-    let mut id_map = HashMap::with_capacity(file_count);
-    for path in input_list {
-        id_map.insert(path.stem, ());
-    }
 
     // Read the changelog to see if posts is outdated
     // Update the changelog only after htmlify and frontmatter is verified
@@ -72,7 +70,7 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     //  I separate out 'api_and_comment', 'post_list', and 'text_list'
     //  as only 'htmlify_into_partials' needs them so they could be dropped
     //  at 'join_partials'
-    let mut text_list = Vec::with_capacity(file_count);
+    let mut text_list = Vec::with_capacity(input_list.len());
     for path in input_list {
         let mut text = String::new();
         read_file(path.path, &mut text).or_die(1);
@@ -80,31 +78,24 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     }
     let (shared_view_metadata, api_and_comment, post_list, lang_list) =
         analyse_metadata(config, &text_list, &changelog, input_list);
+    let shared = (config, input_list, shared_view_metadata.as_slice());
 
     // Run the markup compiler
     //
     // Though I probably should do the frontmatter validation before
     // writing to files in 'htmlify_into_partials', but decided against it
     // because it makes the lifetime dependency graph complicated
-    htmlify_into_partials(
-        config,
-        input_list,
-        &mut changelog,
-        &shared_view_metadata,
-        api_and_comment,
-        post_list,
-    );
+    htmlify_into_partials(shared, &mut changelog, api_and_comment, post_list);
     // We can drop 'text_list', 'post_list', and 'api_and_comment' here
 
     // Link/Join the partials into the final output
     // Frontmatter's lifetime depends on 'shared_view_metadata'
-    join_partials(
-        config,
-        input_list,
-        &changelog,
-        &shared_view_metadata,
-        &lang_list,
-    );
+    let linker_view_metadata = linker_metadata_list_new(shared, &lang_list);
+
+    // Must update the cache before linking as linker uses this info
+    write_caches(shared, &changelog, &linker_view_metadata);
+
+    join_partials(shared, &changelog, &linker_view_metadata);
 }
 
 /******************************************************************************/
@@ -241,14 +232,14 @@ fn analyse_metadata<'config, 'text, 'path>(
 // HTMLify the post (i.e. run through asciidoctor, etc.)
 // Also splits the table of contents (toc) and the body (doc)
 
-fn htmlify_into_partials<'input>(
-    config: &RequiredConfigs,
-    input_list: &[PathReadMetadata<'input>],
-    changelog: &mut UpdateTimes<'input>,
-    shared_view_metadata: &[ViewMetadata],
+fn htmlify_into_partials<'path, 'log>(
+    (config, input_list, shared_view_metadata): Shared<'_, '_, 'path, '_>,
+    changelog: &mut UpdateTimes<'log>,
     api_and_comment: ApiAndComment,
     post_list: Vec<Post>, // Eat this
-) {
+) where
+    'path: 'log,
+{
     debug_assert_eq!(input_list.len(), post_list.len());
 
     // Because we flatten post views, using cursor to
@@ -298,24 +289,20 @@ fn htmlify_into_partials<'input>(
 // For each view, join the disparate sections into the final product
 
 #[derive(Debug)]
-struct LinkerViewMetadata<'shared, 'lang_group_list, 'frontmatter_string> {
-    id: &'shared str,
+struct LinkerViewMetadata<'path, 'lang_group_list, 'shared> {
+    id: &'path str,
     frontmatter_serialised: String,
     series_cache_lines: Vec<String>,
     tags_cache_lines: Vec<String>,
     lang: &'lang_group_list str,
     relative_output_loc: String,
-    title: &'frontmatter_string str,
+    title: &'shared str,
     other_langs: (&'lang_group_list str, &'lang_group_list str),
 }
-
-fn join_partials(
-    config: &RequiredConfigs,
-    input_list: &[PathReadMetadata],
-    changelog: &UpdateTimes,
-    shared_view_metadata: &[ViewMetadata],
-    lang_group_list: &[String],
-) {
+fn linker_metadata_list_new<'path, 'lang_group_list, 'shared>(
+    (config, input_list, shared_view_metadata): Shared<'_, '_, 'path, 'shared>,
+    lang_group_list: &'lang_group_list [String],
+) -> Vec<LinkerViewMetadata<'path, 'lang_group_list, 'shared>> {
     debug_assert_eq!(input_list.len(), lang_group_list.len());
 
     // Each view must know about its parent's other views to link to them
@@ -347,18 +334,16 @@ fn join_partials(
             other_langs: exclude(&lang_group_list[j], lang),
         });
     }
+    linker_metadata
+}
 
+fn join_partials(
+    (config, input_list, shared_view_metadata): Shared,
+    changelog: &UpdateTimes,
+    linker_metadata: &[LinkerViewMetadata],
+) {
     //println!("{:#?}", linker_metadata);
     //std::process::exit(0);
-
-    // Must update the cache before linking as linker uses this info
-    write_caches(
-        config,
-        input_list,
-        &shared_view_metadata,
-        changelog,
-        &linker_metadata,
-    );
 
     // Run the linker to join the partials (toc and doc)
     for (i, j, _, post_range, shared) in walk(shared_view_metadata) {
@@ -420,9 +405,7 @@ fn join_partials(
 }
 
 fn write_caches(
-    config: &RequiredConfigs,
-    input_list: &[PathReadMetadata],
-    shared_view_metadata: &[ViewMetadata],
+    (config, input_list, shared_view_metadata): Shared,
     changelog: &UpdateTimes,
     linker_metadata: &[LinkerViewMetadata],
 ) {
@@ -632,6 +615,10 @@ fn fmt_linker_args<'shared, 'frontmatter_string>(
 struct UpdateTimes<'log>(HashMap<&'log str, DateTime<Utc>>);
 
 impl<'log> UpdateTimes<'log> {
+    fn new_empty() -> Self {
+        Self(HashMap::new())
+    }
+
     fn new(log_str: &'log str) -> Result<Self, ParseError> {
         let mut log = HashMap::with_capacity(log_str.lines().count());
         //eprintln!("{:?}", log_str.lines().collect::<Vec<_>>());
