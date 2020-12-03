@@ -2,7 +2,6 @@
 
 NEWLINE='
 '
-
 exit_error() { printf %s\\n "Key '${1}' not provided" >&2; exit 1; }
 
 dehasH() {
@@ -63,7 +62,7 @@ fi
 NEWLINE='
 '
 
-# run: ../../../make.sh build -f
+#run: ../../../make.sh build -f
 #printf \\n%s "${post_hash_table}" >&2
 #printf -- -\ %s\\n "${@}" >&2
 #exit 0
@@ -118,7 +117,8 @@ date_updated="${date_updated%??????????????}"
 
 <body><div class="structure-blog">
   <header class="sticky" id="top">
-$( "${local_templates_dir}/navbar.sh" "${domain}" "${relative_output_url}" )
+$( "${local_templates_dir}/navbar.sh" \
+ "${domain}" "${relative_output_url}" "${language}" )
   </header>
   <aside class="left">
     <div>${author}</div>

@@ -204,7 +204,7 @@ build_blog() {
     "${SITE_TEMPLATES}/blog-index.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
       | "${CONFIG}/combine.sh" \
         "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
-          "${DOMAIN}" "${index_output#"${PUBLIC}/"}" )" \
+          "${DOMAIN}" "${index_output#"${PUBLIC}/"}" "" )" \
       >"${index_output}" || exit "$?"
 
     for lang in ${LANG_LIST}; do
@@ -213,7 +213,7 @@ build_blog() {
       "${SITE_TEMPLATES}/tags.sh" "${TAGS_CACHE}" "${LINK_CACHE}" "${lang}" \
         | "${CONFIG}/combine.sh" \
           "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
-            "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" )" \
+            "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" "" )" \
         >"${tags_output}" || exit "$?"
     done
   fi
@@ -240,7 +240,7 @@ rust_api() {
   # end
 }
 
-#run: sh % build-rust test
+#run: ../make.sh build-rust test
 update() {
   filename="${1##*/}"
   parent="${1%"${filename}"}"  # has trailing '/' if not root
@@ -266,7 +266,7 @@ compile_html() {
   <"${1}" "${CONFIG}/combine.sh" \
     "prefix=v:${DOMAIN}" \
     "navbar=v:$(
-      "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}"
+      "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}" ""
     )" \
   >"${2}" || exit "$?"
 }
@@ -275,7 +275,7 @@ compile_sh() {
   sh "${1}" | "${CONFIG}/combine.sh" \
     "prefix=v:${DOMAIN}" \
     "navbar=v:$(
-      "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}"
+      "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}" ""
     )" \
   #>"${2}" || exit "$?"
 }
