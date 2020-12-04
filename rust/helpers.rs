@@ -127,10 +127,19 @@ impl<'path> PathReadMetadata<'path> {
             0,
         );
         let created = FileTime::from_creation_time(meta)
-            .map(|filetime| Utc.timestamp(filetime.unix_seconds(), 0))
-            .unwrap_or_else(|| Utc.timestamp(0, 0));
-        // 'chrono::Utc.timestamp' errors at i64::MIN
-        //.unwrap_or(Utc.timestamp(i64::MIN, 0));
+            .ok_or(())  // Change Option to Result
+
+            // BUG: Not really sure why 'FileTime' does not read this properly
+            //      https://docs.rs/filetime/0.2.13/filetime/struct.FileTime.html
+            //      Documentation says it will sometimes
+            .or_else(|_| meta.created().map(FileTime::from_system_time))
+            .as_ref()
+            .map(FileTime::unix_seconds)
+            .map(|nano| Utc.timestamp(nano, 0))
+            .unwrap_or_else(|_| Utc.timestamp(0, 0))
+             // 'chrono::Utc.timestamp' errors at i64::MIN
+             //.unwrap_or(Utc.timestamp(i64::MIN, 0))
+        ;
 
         Ok(Self {
             path,
@@ -145,6 +154,29 @@ impl<'path> PathReadMetadata<'path> {
         Self::wrap_with_metadata(path, &path.metadata())
     }
 }
+
+// run: cargo test helpers -- --nocapture
+//#[test]
+//fn asdf() {
+//    let loc = "rust/adsfklj.adoc";
+//    //write_file(loc, "hello").or_die(1);
+//    let path = Path::new(loc);
+//    let path_obj = PathReadMetadata::wrap(path).unwrap();
+//    println!("meta created {:?}", path.metadata()
+//        .map(|meta| FileTime::from_system_time(meta.created().unwrap()))
+//        .map(|filetime| Utc.timestamp(filetime.unix_seconds(), 0))
+//        .unwrap());
+//    println!("FT created   {:?}", path.metadata()
+//        .as_ref()
+//        .map(FileTime::from_creation_time)
+//        .unwrap()
+//        .map(|filetime| Utc.timestamp(filetime.unix_seconds(), 0)));
+//    println!("wrap created {:?}", path_obj.created);
+//    println!("wrap updated {:?}", path_obj.updated);
+//    println!("utcnow       {:?}", Utc::now());
+//}
+
+
 
 fn to_datetime(
     time_result: io::Result<SystemTime>,
