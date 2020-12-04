@@ -50,40 +50,55 @@ type Shared<'config, 'path_list, 'input_path, 'shared> = (
     &'shared [ViewMetadata],
 );
 
-pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
-    // Read the 'input_list' into 'changelog' and 'text_list'
-    let mut log_owner = String::new();
-    let mut changelog = {
-        let log_str = read_file(Path::new(&config.changelog), &mut log_owner)
-            .map(|_| log_owner.as_str())
-            .unwrap_or("");
-        UpdateTimes::new(log_str)
-            .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
-            .or_die(1)
-    };
-    let text_list = {
-        let mut text_list = Vec::with_capacity(input_list.len());
-        for path in input_list {
-            let mut text = String::new();
-            read_file(path.path, &mut text).or_die(1);
-            text_list.push_and_check(text);
-        }
-        text_list
-    };
+// Using macro so we get around ownership and self-reference placement
+macro_rules! shared_metadata {
+    (let ($changelog:ident, $shared:ident, $lang_list:ident, $api:pat, $post_list:pat)
+      = from($config:ident, $input_list:ident)
+    ) => {
+        // Read the 'input_list' into 'changelog' and 'text_list'
+        let mut log_owner = String::new();
+        let mut $changelog = {
+            let log_loc = $config.changelog.as_str();
+            let log_str = read_file(Path::new(log_loc), &mut log_owner)
+                .map(|_| log_owner.as_str())
+                .unwrap_or("");
+            UpdateTimes::new(log_str)
+                .map_err(|err| err.with_filename(Cow::Borrowed(log_loc)))
+                .or_die(1)
+        };
+        let text_list = {
+            let mut text_list = Vec::with_capacity($input_list.len());
+            for path in $input_list {
+                let mut text = String::new();
+                read_file(path.path, &mut text).or_die(1);
+                text_list.push_and_check(text);
+            }
+            text_list
+        };
 
-    // Parse into Post
-    // 'text_list', 'shared_metadata', 'lang_list', 'log_owner' are owned data;
-    // the rest are one-time use or borrow from these sources
-    let (shared_metadata, lang_list, api_and_comment, post_list) =
-        analyse_metadata(config, &text_list, &changelog, input_list);
-    let shared = (config, input_list, shared_metadata.as_slice());
+        // Parse into Post
+        // 'text_list', 'shared_metadata', 'lang_list', 'log_owner' are owned
+        // the rest are one-time use or borrow from these sources
+        let (shared_metadata, $lang_list, $api, $post_list) =
+            shared_view_metadata_new($config, &text_list, &$changelog, $input_list);
+        let $shared = ($config, $input_list, shared_metadata.as_slice());
+    };
+}
+
+
+pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
+    // Read files and parse into Post
+    shared_metadata!(
+        let (changelog, shared, lang_list, api, post_list)
+        = from(config, input_list)
+    );
 
     // Run the markup compiler
-    htmlify_into_partials(shared, &mut changelog, api_and_comment, post_list);
-    // We can drop 'text_list', 'post_list', and 'api_and_comment' here
+    htmlify_into_partials(shared, &mut changelog, api, post_list);
+    // We can drop 'text_list', 'post_list', and 'api' here
 
     // Parse and verify the frontmatter
-    let linker_view_metadata = linker_metadata_list_new(shared, &lang_list);
+    let linker_view_metadata = linker_metadata_new(shared, &lang_list);
 
     // Must update the cache before linking as linker uses this info
     write_caches(shared, &changelog, &linker_view_metadata, UPDATE);
@@ -93,34 +108,14 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
 }
 
 pub fn delete(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
-    let mut log_owner = String::new();
-    let mut changelog = {
-        let log_str = read_file(Path::new(&config.changelog), &mut log_owner)
-            .map(|_| log_owner.as_str())
-            .unwrap_or("");
-        UpdateTimes::new(log_str)
-            .map_err(|err| err.with_filename(Cow::Borrowed(&config.changelog)))
-            .or_die(1)
-    };
-    let text_list = {
-        let mut text_list = Vec::with_capacity(input_list.len());
-        for path in input_list {
-            let mut text = String::new();
-            read_file(path.path, &mut text).or_die(1);
-            text_list.push_and_check(text);
-        }
-        text_list
-    };
+    shared_metadata!(
+        let (changelog, shared, lang_list, _, _)
+        = from(config, input_list)
+    );
+    let linker_metadata = linker_metadata_new(shared, &lang_list);
 
-    let (shared_metadata, lang_list, _, _) =
-        analyse_metadata(config, &text_list, &changelog, input_list);
-    let shared = (config, input_list, shared_metadata.as_slice());
-    let linker_metadata = linker_metadata_list_new(shared, &lang_list);
-
-
-    // --- From here it is meaningfully different from `compile()` ----
     // Delete toc, doc, and target
-    for view_data in &shared_metadata {
+    for view_data in shared.2 {
         let toc_loc = view_data.toc_loc.as_str();
         let doc_loc = view_data.doc_loc.as_str();
         match delete_file(toc_loc) {
@@ -210,7 +205,7 @@ impl<'a> Iterator for ViewMetadataWalker<'a> {
     }
 }
 
-fn analyse_metadata<'config, 'text, 'input_path>(
+fn shared_view_metadata_new<'config, 'text, 'input_path>(
     config: &'config RequiredConfigs,
     text_list: &'text [String],
     changelog: &UpdateTimes,
@@ -352,7 +347,7 @@ struct LinkerViewMetadata<'input_path, 'lang_group_list, 'shared> {
     other_langs: (&'lang_group_list str, &'lang_group_list str),
 }
 
-fn linker_metadata_list_new<'input_path, 'lang_group_list, 'shared>(
+fn linker_metadata_new<'input_path, 'lang_group_list, 'shared>(
     (config, input_list, shared_metadata): Shared<'_, '_, 'input_path, 'shared>,
     lang_group_list: &'lang_group_list [String],
 ) -> Vec<LinkerViewMetadata<'input_path, 'lang_group_list, 'shared>> {
