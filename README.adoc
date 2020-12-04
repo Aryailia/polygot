@@ -2,23 +2,51 @@
 
 == Description
 
-A static site generator built with POSIX shell (it can run with 'dash') for ease of customisability. Supports Markdown (@TODO) and Asciidoctor out of the box, other formats are easily extensible.
+A static-site blog/website generator designed for the international, modern web avoiding JavaScript without sacrificing interactivity.
 
-You can compile markdown with Raph Levien's 'link:https://github.com/raphlinus/pulldown-cmark[pulldown-cmark]' (written in Rust! Also https://commonmark.org/[CommonMark] is pretty cool! A better flavour of Markdown)
-or John MacFarlane's 'link:https://pandoc.org/[pandoc]' (https://github.com/jgm/pandoc[github repo]).
+This project consists primarily of three parts:
 
-== Requirements
+* A simple build/make script for building from 'source' to 'public', automating SASS/LASS/sh/etc. (Checkout https://github.com/eradman/entr[entr] for file watching and https://www.falkon.org/[Falkon] automatic reload (hot reload))
+* A Rust backend for compiling posts, and a simple CLI script for managing posts
+* A starter website showcasing the CSS for spoilers, responsive (adapts to phone/computer/tablet), drop down menus, etc.
+
+=== Why another static-site generator?
+
+When researching better ways to  taking notes or wanting to compile knowledge, I found that Office software come and go; only plain text stands the test of time and can truly follow you to every device.
+Although WYSIWYG editors are the norm, searching just a little deeper leads to Markdown as striking the appropriate balance between distraction-free simplicity and just enough formating.
+
+However, with uniformed opinion on the rise, the lack of meaningful support for citations kills Markdown for me.
+In its place, there is Asciidoctor, Commonmark, LaTeX, SILE, raw HTML, MediaWiki markup, Org-mode, RMarkdown, Scribble...
+The search is paralysing; I still have not found a markup language I am satisfied with.
+
+Thus, I wanted something that could deal with any markup language.
+This precludes most static-site generators.
+Also, as speaker of more than one language, I would like my blog platform to support me writing in multiple languages from a single file.
+And thus this project was born.
+
+This is my first project in Rust, so I wanted to keep the depency graph lean.
+Also this is a show case of what you can do without JavaScript.
+Also, I wanted to design a website suited for text-based browsers.
+Also, I wanted a site generator that is fast.
+
+== Instructions
 
 Nothing other than POSIX shell is truly required.
 
-* Asciidoctor/Pandoc/Emacs/etc. depending on what
+* Asciidoctor/Pandoc/Emacs/etc. depending on what markup language you want to use
 * Pygments: This is what I currently using for code syntax highlighting (this needs python)
-* POSIX shell: pretty much any Linux/Mac distribution. On Windows you can get this via WSL or via bash by install https://git-scm.com[git]
+* POSIX shell: pretty much any Linux/Mac distribution. On Windows you can get this via WSL or via bash by install https://git-scm.com[git] (gives you the bash shell)
 
 If you want to be able to compile
 
-* cmake: Required by libc dependency
+* cmake: Required for building https://github.com/alexcrichton/filetime[FileTime] dependency, this allows me to set last-modified time cross-platform.
 * rust: stable is fine
+
+To use this, you just need to `git clone`.
+I plan to include the compiled binary as part of the git, but until then, you must run `make.sh build-rust` first.
+
+From within a shell/console (dash, bash, fish, etc.), you interact with `blog.sh` and `make.sh`.
+`blog.sh`  opens files with `$EDITOR` by default (typically set by `.bashrc`); you are expected to customise this command to your use case.
 
 == Design Goals
 
@@ -28,6 +56,7 @@ If you want to be able to compile
 * Automatic RSS/Atom feed generation from blog posts (@TODO)
 * Table of contents in sidebar
 * All features supported without JavaScript (except scrollspy, @TODO)
+* Linking between related posts into series (currently sorts by date created) (WIP)
 
 === Writer-facing
 
@@ -104,6 +133,13 @@ They obey the same rules as language tags in the above section.
 === Output location
 
 TODO: write this
+
+== See also
+
+* Raph Levien's https://github.com/raphlinus/pulldown-cmark[pulldown-cmark]' (written in Rust! Also https://commonmark.org/[CommonMark] is pretty cool! The better Markdown)
+* Eric Radman's https://github.com/eradman/entr[entr], a CLI tool for watching for file changes
+* John MacFarlane's https://github.com/jgm/pandoc[Pandoc]
+* The 'shell' branch of this project for more hardcore POSIX shell. This started as pure POSIX shell project
 
 == Similar static-site blog generators
 
