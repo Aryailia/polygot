@@ -22,7 +22,7 @@ mod helpers;
 mod post;
 mod traits;
 
-use compile::{compile, delete};
+use compile::{compile, relink, delete};
 use helpers::{program_name, PathReadMetadata};
 use traits::{ResultExt, ShellEscape, VecExt};
 
@@ -108,7 +108,7 @@ macro_rules! define_config {
         // Put in a struct so that we can keep the variable names
         // the same between 'parse_option' and use in 'compile_post'
         // Naming chosen for the sentence: 'RequireConfigs::unwrap(config)'
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         pub struct RequiredConfigs<'a> {
             $($o_id: $o_type,)*
             $($r_id: &'a str,)*
@@ -206,6 +206,19 @@ fn main() {
             compile(&unwrapped_config, input_list.as_slice());
         }
 
+        2, "relink" => {
+            let published_dir = args.get(1).unwrap();
+            let unwrapped_config = RequiredConfigs::unwrap(&config);
+            let input_owner = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
+            let mut input_list = Vec::with_capacity(input_owner.len());
+            for (pathbuf, metadata) in &input_owner {
+                let path_obj = PathReadMetadata::wrap_with_metadata(pathbuf.as_path(), metadata).or_die(1);
+                input_list.push_and_check(path_obj);
+            }
+
+            relink(&unwrapped_config, input_list.as_slice());
+        }
+
         2, "delete-generated" => {
             let target_loc = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
@@ -215,6 +228,7 @@ fn main() {
             delete(&unwrapped_config, &[target]);
 
         }
+
     });
 }
 

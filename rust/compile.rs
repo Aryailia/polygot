@@ -57,6 +57,7 @@ macro_rules! shared_metadata {
     ) => {
         // Read the 'input_list' into 'changelog' and 'text_list'
         let mut log_owner = String::new();
+        #[allow(unused_mut)]
         let mut $changelog = {
             let log_loc = $config.changelog.as_str();
             let log_str = read_file(Path::new(log_loc), &mut log_owner)
@@ -98,13 +99,13 @@ pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     // We can drop 'text_list', 'post_list', and 'api' here
 
     // Parse and verify the frontmatter
-    let linker_view_metadata = linker_metadata_new(shared, &lang_list);
+    let linker_metadata = linker_metadata_new(shared, &lang_list);
 
     // Must update the cache before linking as linker uses this info
-    write_caches(shared, &changelog, &linker_view_metadata, UPDATE);
+    write_caches(shared, &changelog, &linker_metadata, UPDATE);
 
     // Link/Join the partials into the final output
-    join_partials(shared, &changelog, &linker_view_metadata);
+    join_partials(shared, &changelog, &linker_metadata);
 }
 
 pub fn delete(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
@@ -144,6 +145,21 @@ pub fn delete(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     }
     write_caches(shared, &changelog, &linker_metadata, DELETE);
 }
+
+pub fn relink(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
+    let config = &{
+        let mut temp = config.clone();
+        temp.force = true;
+        temp
+    };
+    shared_metadata!(
+        let (changelog, shared, lang_list, _, _)
+        = from(config, input_list)
+    );
+    let linker_metadata = linker_metadata_new(shared, &lang_list);
+    join_partials(shared, &changelog, &linker_metadata);
+}
+
 
 /******************************************************************************/
 // Parse the custom markup and metadata
