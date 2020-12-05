@@ -9,20 +9,34 @@ SYNOPSIS
 
 DESCRIPTION
   One of the two UIs for building the blog. Similar to makefile, you can
-  specify several SUBCOMMANDs
+  specify several SUBCOMMANDs together
+
+  e.g. \`${NAME} clean build-host\`
+
+  'Building' means do compile step and link step
 
 SUBCOMMAND
- clean-public          Deletes the \${PUBLIC} directory
- clean-cache           Deletes the \${CACHE} directory
- clean                 Deletes the cache and public directories
- clean-all             Deletes the cache, public, and target directories
- build-blog            Builds all the blog posts
- build-rust            Compiles rust to release (use --debug-profile)
- build-website         Builds the website (compile/link/copy source -> public)
- build                 Builds both the website and the blog posts
- build-all             Runs build-blog, build-rust, build-website
- delete-generated <1>  Deletes files and cache lines generated into cache and
-                       public directories made from <arg1> (i.e. same file stem)
+  clean                 Deletes the cache and public directories
+  build                 Builds both the website and the blog posts
+  build-rust            Compiles rust to release (use --debug-profile)
+
+  relink                Run linker step with --force (skip slow compile step)
+  server                Does 'relink-host' and then starts the server
+  start-server-only     Start server for previewing public (NOT for production)
+  delete-generated <1>  Deletes files and cache lines generated into cache and
+                        public directories made from <1> (i.e. same file stem)
+
+
+  clean-all             Deletes the cache, public, and target directories
+  clean-public          Deletes the \${PUBLIC} directory
+  clean-cache           Deletes the \${CACHE} directory
+  build-all             Runs build-blog, build-rust, build-website
+  build-blog            Builds all the blog posts
+  build-website         Builds the website (compile/link/copy source -> public)
+  build-local           'build' designed for opening via 'file://' in browser
+  build-host            'build' (default) for 'http://localhost:${PORT}/'
+  relink-local          'relink' designed for opening via 'file://' in browser
+  relink-host           'relink' (default) for 'http://localhost:${PORT}/'
 
 OPTIONS
   --help (alias: -h)
@@ -76,13 +90,14 @@ main() {
   # This is for links to have the proper value if you view them locally
   # TODO: add local web hosting to ${BLOG_API}
   #DOMAIN="${PROJECT_HOME}/${PUBLIC}"  # If local  (file:///...)
-  #DOMAIN=""                           # If server (http://...)
+  DOMAIN=""                           # If server (http://...)
   FILES_TO_PROCESS_LIMIT=10000
   POST_OUTPUT="${BLOG_RELATIVE}/{lang}/{year}-{month}-{day}-{file_stem}.html"
   ##############################################################################
 
-         TAGS_CACHE="${CACHE}/tags.csv"
-         LINK_CACHE="${CACHE}/link.csv"
+                PORT="8080" # for the dev server
+          TAGS_CACHE="${CACHE}/tags.csv"
+          LINK_CACHE="${CACHE}/link.csv"
   export BLOG_OUTPUT="${PUBLIC}/${BLOG_RELATIVE}"
   export BLOG_API="./$(
     sed -n '1,/\[\[bin\]\]/d;s/"$//;s/^name = "//p' "Cargo.toml"
@@ -111,73 +126,112 @@ main() {
   # because while `. make.sh` can have arguments, it should not
   [ -z "${args}" ] && { show_help; return 1; }
 
-  eval "set -- ${args}"
+  do_commands ${args}
+}
 
-  # Run these commands first
-  # BUG: `./make.sh delete-generated build-rust` is technically invalid
-  #      if build-rust is a file (but posts probably always have an extension)
-  for subcommand in "$@"; do case "${subcommand}"
-    in build-rust)    build_rust
-  esac; done
-
-  # Then check if it exists
+check_if_api_exists() {
   [ ! -x "${BLOG_API}" ] && die FATAL 1 \
     "'${BLOG_API}' was not found (blog api)." \
     "Run \`${NAME} build-rust\` (though one should be provided)"
-
-  while [ "$#" -gt 0 ]; do case "${1}"
-    in clean-cache)
-      errln "Removing contents of '${CACHE}/'..."
-      rm -rf "${CACHE}"
-    ;; clean-public)
-      errln "Removing contents of '${PUBLIC}/'..."
-      rm -rf "${PUBLIC}"
-    ;; clean)
-      errln "Removing contents of '${CACHE}' and '${PUBLIC}/'..."
-      rm -rf "${CACHE}" "${PUBLIC}"
-
-    ;; clean-all)
-      errln "Removing contents of '${CACHE}/', '${PUBLIC}/', 'target/' ..."
-      require 'cargo'
-      rm -rf "${CACHE}"
-      rm -rf "${PUBLIC}"
-      cargo clean
-      rm "${BLOG_API}"
-
-    ;; build-blog)  build_blog
-    ;; build-website)
-      errln "Building just the website (without the blog)..."
-
-    ;; build-all)
-      errln "Compiling rust..."
-      build_rust
-      errln "" "Building the website..."
-      build_website
-      errln "" "Building the blog..."
-      build_blog
-
-    ;; build-rust)     # already handled
-    ;; build)
-      errln "Building the website and the blog..."
-      build_website
-      build_blog
-
-    ;; delete-generated)
-      [ -n "${2}" ] || die FATAL 1 "\`${NAME} ${1}\` needs a second argument"
-      [ -f "${2}" ] || die FATAL 1 "File '${2}' does not exist"
-      rust_api delete-generated "${2}"; shift 1
-
-    ;; test)
-      #errln "for testing"
-      #build_rust
-      #build_blog "${PUBLISHED}/blue.adoc"
-      #<"${TAGS_CACHE}" sieve_out_name "chinese_tones"
-      #rust_api delete-generated "${2}"; shift 1
-      DOMAIN=~/interim/bl/website/public rust_api delete-generated 'config/published/archive-a-peek-at-unicodes-soft-underbelly.adoc'
-
-    ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
-  esac; shift 1; done
 }
+
+do_commands() {
+  # Then check if it exists
+
+  while [ "$#" -gt 0 ]; do
+    case "${1}"
+      in clean-cache)
+        errln "Removing contents of '${CACHE}/'..."
+        rm -rf "${CACHE}"
+
+      ;; clean-public)
+        errln "Removing contents of '${PUBLIC}/'..."
+        rm -rf "${PUBLIC}"
+
+      ;; clean)
+        errln "Removing contents of '${CACHE}' and '${PUBLIC}/'..."
+        rm -rf "${CACHE}" "${PUBLIC}"
+
+      ;; clean-all)
+        errln "Removing contents of '${CACHE}/', '${PUBLIC}/', 'target/' ..."
+        require 'cargo'
+        rm -rf "${CACHE}"
+        rm -rf "${PUBLIC}"
+        cargo clean
+        rm "${BLOG_API}"
+
+
+
+      ;; build-rust)
+        errln "Compiling rust..." "======="
+        build_rust
+
+      ;; build-blog)
+        check_if_api_exists
+        if rust_api 'compile' "${PUBLISHED}"; then
+          build_blog_indices
+        fi
+
+      ;; build-website)
+        check_if_api_exists
+        errln "Building the website..." "======="
+        build_website
+
+      ;; build-all)          do_commands 'build-rust' 'build'
+
+
+
+      ;; build-local)
+        errln "Using DOMAIN='${PROJECT_HOME}/${PUBLIC}' for build"
+        DOMAIN="${PROJECT_HOME}/${PUBLIC}" do_commands 'build'
+
+      ;; build-host)    DOMAIN='' do_commands 'build'
+        errln "Using DOMAIN='' for build"
+        DOMAIN="" do_commands 'build'
+
+      ;; build)              do_commands 'build-blog' 'build-website'
+
+
+
+      ;; relink-local)
+        errln "Using DOMAIN='${PROJECT_HOME}/${PUBLIC}' for relink"
+        DOMAIN="${PROJECT_HOME}/${PUBLIC}" do_commands 'relink'
+      ;; relink-host)
+        errln "Using DOMAIN='' for relink"
+        DOMAIN="" do_commands 'relink'
+      ;; relink)
+        check_if_api_exists
+        if rust_api 'relink' "${PUBLISHED}"; then
+          build_blog_indices
+          errln
+          do_commands 'build-website'
+        fi
+
+
+
+      # BUG: `./make.sh delete-generated build-rust` is technically invalid if
+      #      build-rust is a file (but posts probably always have an extension)
+      ;; delete-generated)
+        [ -n "${2}" ] || die FATAL 1 "\`${NAME} ${1}\` needs a second argument"
+        [ -f "${2}" ] || die FATAL 1 "File '${2}' does not exist"
+        rust_api 'delete-generated' "${2}"; shift 1
+
+      ;; start-server-only)  rust_api 'start-server' "${PORT}"
+
+      ;; server)
+        DOMAIN='' do_commands 'relink' 'start-server'
+      #;; test)
+
+      ;; *) die FATAL 1 "\`${NAME} '${1}'\` is an invalid subcommand."
+    esac
+    shift 1
+    [ "$#" -gt 0 ] && errln
+  done
+}
+
+
+#run: DOMAIN='' ./make.sh build-local
+
 #blah() {
 #  <<EOF cat - >"${TAGS_CACHE}"
 #Junk,2019-11-01,stuff,en,The Quick, brown fox jumped over the lazy doggo
@@ -201,41 +255,37 @@ build_website() {
     do_for_each_file_in "${SOURCE}" "${SOURCE}/" compile
 }
 
-#@TODO add verbose option
-build_blog() {
-  if "${FORCE}" || [ ! -e "${BLOG_OUTPUT}" ]
-    then _force_option='--force'
-    else _force_option=''
-  fi
+build_blog_indices() {
   mkdir -p "${CACHE}" "${BLOG_OUTPUT}"
-  if rust_api compile "${PUBLISHED}"   ${_force_option}; then
-    export LANG_LIST="$( <"${TAGS_CACHE}" cut -d ',' -f 4 | sort | uniq )"
+  export LANG_LIST="$( <"${TAGS_CACHE}" cut -d ',' -f 4 | sort | uniq )"
 
-    index_output="${BLOG_OUTPUT}/index.html"
-    errln "Creating blog landing page '${index_output}'"
-    "${SITE_TEMPLATES}/blog-index.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
+  index_output="${BLOG_OUTPUT}/index.html"
+  errln "Creating blog landing page '${index_output}'"
+  "${SITE_TEMPLATES}/blog-index.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
+    | "${CONFIG}/combine.sh" \
+      "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
+        "${DOMAIN}" "${index_output#"${PUBLIC}/"}" "" )" \
+    >"${index_output}" || exit "$?"
+
+  for lang in ${LANG_LIST}; do
+    tags_output="${BLOG_OUTPUT}/tags-${lang}.html"
+    errln "Making tags index page '${tags_output}'"
+    "${SITE_TEMPLATES}/tags.sh" "${TAGS_CACHE}" "${LINK_CACHE}" "${lang}" \
       | "${CONFIG}/combine.sh" \
         "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
-          "${DOMAIN}" "${index_output#"${PUBLIC}/"}" "" )" \
-      >"${index_output}" || exit "$?"
-
-    for lang in ${LANG_LIST}; do
-      tags_output="${BLOG_OUTPUT}/tags-${lang}.html"
-      errln "Making tags index page '${tags_output}'"
-      "${SITE_TEMPLATES}/tags.sh" "${TAGS_CACHE}" "${LINK_CACHE}" "${lang}" \
-        | "${CONFIG}/combine.sh" \
-          "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
-            "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" "" )" \
-        >"${tags_output}" || exit "$?"
-    done
-  fi
-
+          "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" "" )" \
+      >"${tags_output}" || exit "$?"
+  done
 }
 
 rust_api() {
   if "${DEBUG}"
     then _api='cargo';       _args='run --'
     else _api="${BLOG_API}"; _args=''
+  fi
+  if "${FORCE}"
+    then _force='--force'
+    else _force=''
   fi
   #"${BLOG_API}" ${_args} "$@" \
   "${_api}" ${_args} "$@" \
@@ -248,11 +298,11 @@ rust_api() {
     --public-dir "${PUBLIC}" \
     --templates-dir "${SITE_TEMPLATES}" \
     ${EXPLICIT} \
+    ${_force} \
     ${VERBOSE} \
   # end
 }
 
-#run: ../make.sh build-rust test
 update() {
   filename="${1##*/}"
   parent="${1%"${filename}"}"  # has trailing '/' if not root
@@ -265,9 +315,9 @@ update() {
   mkdir -p "${PUBLIC}/${parent}"
 
   shift 3 || exit "$?"
-  if "${FORCE}" || rust_api is-first-newer-than "${from}" "${into}"; then
+  if "${FORCE}" || rust_api 'is-first-newer-than' "${from}" "${into}"; then
     "$@" "${from}" "${into}" || exit "$?"
-    rust_api sync-last-updated-of-first-to "${from}" "${into}"
+    rust_api 'sync-last-updated-of-first-to' "${from}" "${into}"
     errln "Processed '\${SOURCE}/${from_rel}' -> '\${PUBLIC}/${into_rel}'"
   else
     errln "Not updated '\${SOURCE}/${from_rel}' <> '\${PUBLIC}/${into_rel}'"

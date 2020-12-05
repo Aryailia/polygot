@@ -21,8 +21,8 @@ mod frontmatter;
 mod helpers;
 mod post;
 mod traits;
+mod webserver;
 
-use compile::{compile, relink, delete};
 use helpers::{program_name, PathReadMetadata};
 use traits::{ResultExt, ShellEscape, VecExt};
 
@@ -105,6 +105,14 @@ macro_rules! define_config {
             Ok(())
         }
 
+        struct OptionMessages<'a> {
+            $($r_id: &'a str,)*
+        }
+
+        const MSG: OptionMessages<'static> = OptionMessages {
+            $($r_id: concat!("--", $r_long, " is a required option"),)*
+        };
+
         // Put in a struct so that we can keep the variable names
         // the same between 'parse_option' and use in 'compile_post'
         // Naming chosen for the sentence: 'RequireConfigs::unwrap(config)'
@@ -119,7 +127,7 @@ macro_rules! define_config {
                 let mut output = Self {
                     $($o_id: config.$o_id,)*
                     $($r_id: config.$r_id.as_ref()
-                        .ok_or(concat!("--", $r_long, " is a required option"))
+                        .ok_or(MSG.$r_id)
                         .or_die(1)
                         .as_str(),
                     )*
@@ -130,6 +138,7 @@ macro_rules! define_config {
                 }
                 output
             }
+
         }
     };
 }
@@ -190,10 +199,12 @@ fn main() {
 
             let input_path = Path::new(input_pathstr.as_str());
             let input = PathReadMetadata::wrap(input_path).or_die(1);
-            compile(&unwrapped_config, &[input]);
+            compile::build(&unwrapped_config, &[input]);
         }
 
         2, "compile" => {
+            eprintln!("Compiling and linking the blog...\n========");
+
             let published_dir = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
             let input_owner = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
@@ -203,10 +214,12 @@ fn main() {
                 input_list.push_and_check(path_obj);
             }
 
-            compile(&unwrapped_config, input_list.as_slice());
+            compile::build(&unwrapped_config, input_list.as_slice());
         }
 
         2, "relink" => {
+            eprintln!("Relinking the blog... (i.e. skipping compile step)\n========");
+
             let published_dir = args.get(1).unwrap();
             let unwrapped_config = RequiredConfigs::unwrap(&config);
             let input_owner = shallow_walk(published_dir, unwrapped_config.verbose).or_die(1);
@@ -216,7 +229,7 @@ fn main() {
                 input_list.push_and_check(path_obj);
             }
 
-            relink(&unwrapped_config, input_list.as_slice());
+            compile::relink(&unwrapped_config, input_list.as_slice());
         }
 
         2, "delete-generated" => {
@@ -225,10 +238,27 @@ fn main() {
 
             let target_path = Path::new(target_loc.as_str());
             let target = PathReadMetadata::wrap(target_path).or_die(1);
-            delete(&unwrapped_config, &[target]);
+            compile::delete(&unwrapped_config, &[target]);
 
         }
 
+        2, "start-server" => {
+            let port_string = args.get(1).unwrap();
+            let root_loc = config.public_dir
+                .as_ref()
+                .ok_or(MSG.public_dir)
+                .or_die(1);
+
+            let port = port_string.parse::<u16>()
+                .map_err(|err| [
+                    "Could not parse the argument '",
+                    port_string.as_str(),
+                    "' into an integer. ",
+                    err.to_string().as_str(),
+                ].join(""))
+                .or_die(1);
+            webserver::start_server(port, root_loc).or_die(1);
+        }
     });
 }
 
@@ -237,7 +267,7 @@ fn main() {
 //    eprintln!()
 //}
 
-//run: ../../make.sh build-rust test
+//run: ../make.sh build-rust start-server
 
 fn sync_last_updated(first: &str, date_source: &str) -> ! {
     Path::new(date_source)

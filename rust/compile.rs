@@ -29,19 +29,18 @@ macro_rules! zip {
 }
 
 // @TODO remove println/eprintln replacing with writes to stdout/stderr
-// @TODO check if we can get away with just using Utc::now() for updating
-//       changelog; that we do not need to read output file updated time
 // @TODO Add spacing between different compile steps, make a print vec function
 // @TODO support for light and dark modes
-// @TODO cli subcommands for running linker and compile step individually
 // @TODO cli subcommand for verify valid url links
 // @TODO validate url for output_format, post ids
 // @TODO add validation that series labels do not have invalid characters
 // @TODO add default language
 // @TODO figure out api for labeling series
+// @TODO fix random symlink images/images in make.sh
+// @TODO async, probably want profiling first?
 
-//run: ../../make.sh build-rust test
-// run: cargo test compile -- --nocapture
+//run: ../make.sh build-rust build
+// run: cargo test helpers -- --nocapture
 
 type Shared<'config, 'path_list, 'input_path, 'shared> = (
     // Borrow RequiredConfig happens at its creation so 'config works for both
@@ -87,7 +86,7 @@ macro_rules! shared_metadata {
 }
 
 
-pub fn compile(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
+pub fn build(config: &RequiredConfigs, input_list: &[PathReadMetadata]) {
     // Read files and parse into Post
     shared_metadata!(
         let (changelog, shared, lang_list, api, post_list)

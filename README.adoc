@@ -15,26 +15,29 @@ This project consists primarily of three parts:
 When researching better ways to  taking notes or wanting to compile knowledge, I found that Office software come and go; only plain text stands the test of time and can truly follow you to every device.
 Although WYSIWYG editors are the norm, searching just a little deeper leads to Markdown as striking the appropriate balance between distraction-free simplicity and just enough formating.
 
-However, with uniformed opinion on the rise, the lack of meaningful support for citations kills Markdown for me.
-In its place, there is Asciidoctor, Commonmark, LaTeX, SILE, raw HTML, MediaWiki markup, Org-mode, RMarkdown, Scribble...
-The search is paralysing; I still have not found a markup language I am satisfied with.
+However, with uniformed opinion on the rise, the lack of meaningful support for citations kills Markdown for me. (Also tables, including external files, etc.)
+In its place, there is Asciidoctor, Commonmark, LaTeX, Groff, SILE, raw HTML, MediaWiki markup, Org-mode, RMarkdown, Scribble...
+The search for a good markup language is time-consuming and intractable; I still have not found a markup language I am satisfied with.
 
 Thus, I wanted something that could deal with any markup language.
 This precludes most static-site generators.
 Also, as speaker of more than one language, I would like my blog platform to support me writing in multiple languages from a single file.
 And thus this project was born.
 
-This is my first project in Rust, so I wanted to keep the depency graph lean.
-Also this is a show case of what you can do without JavaScript.
-Also, I wanted to design a website suited for text-based browsers.
-Also, I wanted a site generator that is fast.
+Along with being a site/blog generator, the starter site commits to no JavaScript unless absolutely necessary.
+JavaScript is unnecessary for many sites; moreover this project demonstrates it.
+Following this theme of building up from the basics, I purposefully chose to be very minimal on depending on external crates.
+
+Speed is also a large concern for me.
+LaTeX and Bibtex are unacceptably slow for me.
+I have not yet decided on a solution for bibliographies.
 
 == Instructions
 
 Nothing other than POSIX shell is truly required.
 
 * Asciidoctor/Pandoc/Emacs/etc. depending on what markup language you want to use
-* Pygments: This is what I currently using for code syntax highlighting (this needs python)
+* Pygments:  This is what I currently using for code syntax highlighting (`sudo gem install pygments.rb` or `gem install --user-install pygments.rb`, will need python installed for this)
 * POSIX shell: pretty much any Linux/Mac distribution. On Windows you can get this via WSL or via bash by install https://git-scm.com[git] (gives you the bash shell)
 
 If you want to be able to compile
