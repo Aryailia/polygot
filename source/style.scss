@@ -153,6 +153,20 @@ footer { grid-area: footer; background-color: #aa00cc; }
   color: black;
 }
 
+.button {
+  display: inline-block;
+  padding: 0.05rem 0.8rem;
+  font-size: 0.9rem;
+  font-family: sans-serif;
+  text-decoration: none;
+
+  .octicon {
+    width: 0.9rem;
+    height: 0.9rem;
+    vertical-align: text-top;
+  }
+}
+
 .badge-sharp, .badge-round {
   display: inline-block;
   padding: 0.05rem 0.8rem;
