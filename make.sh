@@ -230,7 +230,7 @@ do_commands() {
 }
 
 
-#run: DOMAIN='' ./make.sh build-local
+#run: ../make.sh build-local
 
 #blah() {
 #  <<EOF cat - >"${TAGS_CACHE}"
@@ -316,9 +316,9 @@ update() {
 
   shift 3 || exit "$?"
   if "${FORCE}" || rust_api 'is-first-newer-than' "${from}" "${into}"; then
+    errln "Processing '\${SOURCE}/${from_rel}' -> '\${PUBLIC}/${into_rel}'"
     "$@" "${from}" "${into}" || exit "$?"
-    rust_api 'sync-last-updated-of-first-to' "${from}" "${into}"
-    errln "Processed '\${SOURCE}/${from_rel}' -> '\${PUBLIC}/${into_rel}'"
+    #rust_api 'sync-last-updated-of-first-to' "${from}" "${into}"
   else
     errln "Not updated '\${SOURCE}/${from_rel}' <> '\${PUBLIC}/${into_rel}'"
   fi
@@ -339,7 +339,7 @@ compile_sh() {
     "navbar=v:$(
       "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}" ""
     )" \
-  #>"${2}" || exit "$?"
+  >"${2}" || exit "$?"
 }
 
 compile() {

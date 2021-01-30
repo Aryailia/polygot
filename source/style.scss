@@ -14,11 +14,20 @@ $link-hover-color: orange;
       "footer     footer     footer";
     grid-template-columns: minmax(0, 1fr) 600px minmax(0, 1fr);
   }
-}
+  > .right {
+    margin-top: 30px;
+    margin-left: 30px;
+    border-left: 1px solid #efefef;
+    padding-left: 20px;
 
-.structure {
+    position: sticky;
+    overflow-y: auto;
+    align-self: start;
+    max-height: 100vh;
+    //max-width: 300px;
+    top: 0;
+  }
 }
-
 
 header { grid-area: header; }
 .left  { grid-area: left;   }
@@ -36,22 +45,18 @@ footer { grid-area: footer; background-color: #aa00cc; }
 /* */
 
 
-.structure-blog {
-  > .right {
-    margin-top: 30px;
-    margin-left: 30px;
-    border-left: 1px solid #efefef;
-    padding-left: 20px;
-
-    position: sticky;
-    overflow-y: auto;
-    align-self: start;
-    max-height: 100vh;
-    //max-width: 300px;
-    top: 0;
+// Alternative grid format
+.structure-only-main {
+  @media screen and (min-width: $LARGE-SCREEN) {
+    display: grid;
+    grid-template-areas:
+      "header     header     header"
+      "left       main       right"
+      "footer     footer     footer";
+    grid-template-columns: 200px 1fr 200px;
   }
-
 }
+
 
 /*******************************************************************************
  * Functional Elements */
@@ -101,6 +106,67 @@ footer { grid-area: footer; background-color: #aa00cc; }
 
 .indicate-clickable {
   @include indicate-clickable;
+}
+
+.column-list {
+  @media screen and (min-width: $LARGE-SCREEN) {
+    grid-template-columns: repeat(auto-fill, 25rem); // 16px font = 400px;
+    justify-content: center;
+    //align-items: start; // cell-height to fit to content
+  }
+  display: grid;
+  grid-gap: 0.8em;
+  grid-auto-flow: dense;
+}
+
+
+.card {
+  border: 1px solid lightgrey;
+  border-radius: 0.25rem;
+
+  .card-header, .card-body, .card-footer {
+    padding: 0.5rem 0.8rem; // vertical horizontal
+  }
+
+  .card-header, .card-footer {
+    font-family: sans-serif;
+    background-color: lightgrey;
+    margin: 0rem;
+  }
+}
+
+// @TODO look into disability-friendly w3c checker
+.alert-primary {
+  background-color: green;
+  color: white;
+}
+.alert-secondary {
+  background-color: blue;
+  color: white;
+}
+.alert-warning {
+  background-color: darkred;
+  color: white;
+}
+.alert-caution {
+  background-color: yellow;
+  color: black;
+}
+
+.badge-sharp, .badge-round {
+  display: inline-block;
+  padding: 0.05rem 0.8rem;
+  margin: 0.1rem;
+
+  font-size: 0.7rem; // 0.05 * 2 + 0.1 * 2 + 0.7 = 1
+  font-family: sans-serif;
+}
+.badge-round {
+  border-radius: 0.6rem;
+}
+
+.float-right {
+  float: right;
 }
 
 
