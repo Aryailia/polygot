@@ -78,28 +78,30 @@ main() {
       printf %b\\n "${YELLOW}Edit${CLEAR} which ${GREEN}post${CLEAR}?"
       path="$( deep_list_valiD "${PUBLISHED}" | pick )" || exit "$?"
       open_in_external_editor "${path}"
-      "${MAKE}" compile-blog
+
+      "${MAKE}" build-local # We are not composing on webhost so build local
+      #"${MAKE}" build-blog
 
     ;; p*)
       printf %b\\n "${GREEN}Publish${CLEAR} which ${YELLOW}draft${CLEAR}?"
       name="$( deep_list_valiD "${DRAFTS}" '*/' | pick )" || exit "$?"
       mkdir -p "${PUBLISHED}"
       mv "${DRAFTS}/${name}" "${PUBLISHED}/${name}"
-      "${MAKE}" compile-blog
+      "${MAKE}" build-local # 'build-blog' for non-local build
 
     ;; u*)
       printf %b\\n "${MAGENTA}Unpublish${CLEAR} which ${GREEN}post${CLEAR}?"
       name="$( deep_list_valiD "${PUBLISHED}" '*/' | pick )" || exit "$?"
       mkdir -p "${DRAFTS}"
       mv "${PUBLISHED}/${name}" "${DRAFTS}/${name}" || exit "$?"
-      "${MAKE}" compile-blog
+      "${MAKE}" build-local # 'build-blog' for non-local build
       #unmake_post_hunks "${name}"
 
     ;; t*)
       printf %b\\n "${RED}Trash${CLEAR} which ${GREEN}post${CLEAR}?"
       name="$( deep_list_valiD "${PUBLISHED}" '*/' | pick )" || exit "$?"
       rm "${PUBLISHED}/${name}" || exit "$?"  # remove markup file
-      "${MAKE}" compile-blog
+      "${MAKE}" build-local # 'build-blog' for non-local build
 
     # Admin stuff
     ;; r*)
@@ -116,7 +118,7 @@ main() {
       [ "${old}" != "${new}" ] && mv "${dir}/${old}" "${dir}/${new}"
 
       if [ "${dir}" = "${PUBLISHED}" ]; then
-        "${MAKE}" compile-blog
+        "${MAKE}" build-local # 'build-blog' for non-local build
       fi
 
     ;; h*)  errln WIP; exit 0
