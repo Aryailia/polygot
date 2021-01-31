@@ -16,8 +16,9 @@ tag="${3:+"#${3}"}"  # Add the anchor if not blank
 
 <<EOF cat -
 ${s}<nav id="top" class="link-hover-only-underline">
-${s}  <span class="sitelogo"><a href="${1}/">Words and Semicolons</a></span><!--
+${s}  <span class="sitelogo"><a href="${1}/">Home</a></span><!--
 ${s}  -->$( entry "${2}" "projects.html" "Projects" "${1}/projects.html" )<!--
+${s}  -->$( entry "${2}" "notes.html"    "Notes"    "${1}/notes.html" )<!--
 ${s}  -->$( entry "${2}" "blog.html"     "Blog"     "${1}/blog${tag}" )<!--
 ${s}  -->$( entry "${2}" "about.html"    "About"    "${1}/about.html" )<!--
 ${s}--></nav>
