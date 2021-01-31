@@ -93,7 +93,8 @@ main() {
   #DOMAIN="${PROJECT_HOME}/${PUBLIC}"  # If local  (file:///...)
   DOMAIN=""                           # If server (http://...)
   FILES_TO_PROCESS_LIMIT=10000
-  POST_OUTPUT="${BLOG_RELATIVE}/{lang}/{year}-{month}-{day}-{file_stem}.html"
+  #POST_OUTPUT="${BLOG_RELATIVE}/{lang}/{year}-{month}-{day}-{file_stem}.html"
+  POST_OUTPUT="${BLOG_RELATIVE}/{lang}/{file_stem}.html"
   ##############################################################################
 
                 PORT="8080" # for the dev server
