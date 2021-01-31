@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 
+# @TODO convert this to perl script so we can translate the tags
+
 NEWLINE='
 '
 exit_error() { printf %s\\n "Key '${1}' not provided" >&2; exit 1; }

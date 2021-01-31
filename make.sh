@@ -85,7 +85,8 @@ main() {
   export SITE_TEMPLATES="${CONFIG}/website-templates"  #
 
   # For customising the content of your posts
-  export AUTHOR=""                           # Your name
+  export AUTHOR=""   # Your name
+   DEFAULT_LANG="en" # If no language specified, this is the default language
 
   # This is for links to have the proper value if you view them locally
   # TODO: add local web hosting to ${BLOG_API}
@@ -230,7 +231,7 @@ do_commands() {
 }
 
 
-#run: ../make.sh build-local
+#run: sh % build-local
 
 #blah() {
 #  <<EOF cat - >"${TAGS_CACHE}"
@@ -261,7 +262,8 @@ build_blog_indices() {
 
   index_output="${BLOG_OUTPUT}/index.html"
   errln "Creating blog landing page '${index_output}'"
-  "${SITE_TEMPLATES}/blog-index.sh" "${TAGS_CACHE}" "${LINK_CACHE}" \
+  PERL5LIB="${PROJECT_HOME}/${CONFIG}" "${SITE_TEMPLATES}/blog-index.pl" \
+    "${TAGS_CACHE}" "${LINK_CACHE}" "${DEFAULT_LANG}" \
     | "${CONFIG}/combine.sh" \
       "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
         "${DOMAIN}" "${index_output#"${PUBLIC}/"}" "" )" \
@@ -270,7 +272,8 @@ build_blog_indices() {
   for lang in ${LANG_LIST}; do
     tags_output="${BLOG_OUTPUT}/tags-${lang}.html"
     errln "Making tags index page '${tags_output}'"
-    "${SITE_TEMPLATES}/tags.sh" "${TAGS_CACHE}" "${LINK_CACHE}" "${lang}" \
+    PERL5LIB="${PROJECT_HOME}/${CONFIG}" "${SITE_TEMPLATES}/tags.pl" \
+      "${TAGS_CACHE}" "${LINK_CACHE}" "${lang}" \
       | "${CONFIG}/combine.sh" \
         "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
           "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" "" )" \
