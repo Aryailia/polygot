@@ -204,6 +204,9 @@ output \
 <<EOF cat -
     </div>
   </main>
+  <footer>
+<!-- INSERT: footer -->
+  </footer>
 </body>
 </html>
 EOF

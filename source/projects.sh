@@ -196,6 +196,9 @@ outln "</div>"
 
 <<EOF cat -
   </main>
+  <footer>
+<!-- INSERT: footer -->
+  </footer>
 </body>
 </html>
 

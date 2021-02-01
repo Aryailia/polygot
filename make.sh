@@ -268,6 +268,7 @@ build_blog_indices() {
     | "${CONFIG}/combine.sh" \
       "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
         "${DOMAIN}" "${index_output#"${PUBLIC}/"}" "" )" \
+      "footer=v:sitemap" \
     >"${index_output}" || exit "$?"
 
   for lang in ${LANG_LIST}; do
@@ -278,6 +279,7 @@ build_blog_indices() {
       | "${CONFIG}/combine.sh" \
         "navbar=v:$( "${SITE_TEMPLATES}/navbar.sh" \
           "${DOMAIN}" "${tags_output#"${PUBLIC}/"}" "" )" \
+        "footer=v:sitemap" \
       >"${tags_output}" || exit "$?"
   done
 }
@@ -334,6 +336,7 @@ compile_html() {
     "navbar=v:$(
       "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}" ""
     )" \
+    "footer=v:sitemap" \
   >"${2}" || exit "$?"
 }
 
@@ -343,6 +346,7 @@ compile_sh() {
     "navbar=v:$(
       "${SITE_TEMPLATES}/navbar.sh" "${DOMAIN}" "${2#"${PUBLIC}/"}" ""
     )" \
+    "footer=v:sitemap" \
   >"${2}" || exit "$?"
 }
 

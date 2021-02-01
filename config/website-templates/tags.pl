@@ -105,7 +105,7 @@ foreach my $tag (sort keys %ids_for_tag) {
 print "
   </main>
   <footer>
-    sitemap
+<!-- INSERT: footer -->
   </footer>
 </body>
 </html>

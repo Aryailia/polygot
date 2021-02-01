@@ -95,7 +95,7 @@ print qq)
     </ul>
   </main>
   <footer>
-    sitemap
+<!-- INSERT: footer -->
   </footer>
 </div></body>
 </html>

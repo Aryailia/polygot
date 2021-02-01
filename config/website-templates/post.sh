@@ -228,7 +228,7 @@ $( cat "${local_toc_path}" )
 $( cat "${local_doc_path}" )
   </main>
   <footer>
-    sitemap
+<!-- INSERT: footer -->
   </footer>
 </div></body>
 </html>
