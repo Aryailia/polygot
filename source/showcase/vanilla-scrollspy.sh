@@ -65,26 +65,36 @@ $(
     <h1>Example of scrollspy with Vanilla CSS</h1>
     <p>
       Below is an example of scrollspy with no JavaScript and only vanilla CSS.
-      Because CSS rules cannot apply backwards by design, the structure of the document is somewhat limited and is probably practical only if this webpage is compiled (i.e. from a static-site generator or dynamically generated).
+      It works primary through the CSS <code>:hover</code> pseudo-selector and the CSS '~' <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors">general sibling combinator</a>.
     </p>
-
-
-    <p>Though the natural thing to do is have the content in one div and the Table of Contents in a second, disjointed div, this breaks the CSS sibling selector.</p>
+    <p>
+      Because CSS rules are <em>cascading</em> and cannot apply backwards by design, the structure of the document is somewhat limited and is probably practical only if this webpage is compiled (i.e. from a static-site generator or dynamically generated).
+      Though the natural thing to do is have the content in one div and the <em>Table of Contents</em> in a second, disjointed div, this breaks the CSS sibling selector.
+    </p>
     <p>This is will <strong>not</strong> work:</p>
-    <pre><code>&lt;div class="left"&gt;
-  &lt;div&gt;content 1&lt;/div&gt;
-  &lt;div&gt;content 2&lt;/div&gt;
-&lt;/div&gt;
-&lt;div class="right"&gt;Table of Contents&lt;/div&gt;</code></pre>
+    <pre><code>&lt;div class="grid"&gt;
+  &lt;div class="left"&gt;
+    &lt;div&gt;content 1&lt;/div&gt;
+    &lt;div&gt;content 2&lt;/div&gt;
+  &lt;/div&gt;
+  &lt;div class="right"&gt;Table of Contents&lt;/div&gt;
+&lt;/div&gt;</code></pre>
 
-    <p>The thing to highlight must be within the container:</p>
+    <p>The table of contents (what is meant to be expanded/highlighted/affected as you scroll) highlight must be within same the container:</p>
     <pre><code>&lt;div class="grid"&gt;
   &lt;div class="left1"&gt;content 1&lt;/div&gt;
   &lt;div class="left2"&gt;content 2&lt;/div&gt;
   &lt;div class="right&gt;Table of Contents&lt;/div&gt;
 &lt;/div&gt;</code></pre>
+    <p>
+      If you have a better idea, please file an issue at the <a href="https://github.com/Aryailia/polygot">GitHub repo</a>.
+      Looking at other <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/Pseudo-classes">CSS pseudo-classes</a> might inspire a solution.
+    </p>
+
+
     <h1>道德經</h1>
     <p>This is the 1973 Mawangdui version (馬王堆帛書版本) of the Tao Te Ching or the Dao De Jing (道德經), sourced from <a href="https://wikisource.org/wiki/Dao_De_Jing">Wikisource</a>, often attributed to Laozi or Lao Tsu (老子).</p>
+    <p>Wikimedia, thus I too, licenses this under the <a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA 3.0</a>.</p>
     <div class="grid">
 EOF
 
@@ -111,7 +121,7 @@ print_toc() {
     body="${2}"
     shift 2
     count="$(( count + 1 ))"
-    printf '        <div id="t%s"><a href="s%s">%s</a></div>\n' \
+    printf '        <div id="t%s"><a href="s%s">&sect;%s</a></div>\n' \
       "${count}" "${count}" "${head}"
   done
   outln '      </ul></div>'
@@ -207,6 +217,6 @@ output \
   <footer>
 <!-- INSERT: footer -->
   </footer>
-</body>
+</div></body>
 </html>
 EOF
