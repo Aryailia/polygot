@@ -45,9 +45,11 @@ project() {
   outln "<div class=\"card-body\">"
   outln "<div>${2}</div>"
 
-  #while IFS='' read -r label; do
-  #  outln "<span class=\"alert-primary badge-round\"><strong>${label}</strong></span>"
-  #done
+  while IFS='' read -r label; do
+    if [ -n "${label}" ]; then
+      outln "<span class=\"alert-primary badge-round\"><strong>${label}</strong></span>"
+    fi
+  done
   outln "</div>"
 
   if [ -n "${3}" ]; then
@@ -67,7 +69,7 @@ github() {
 outln "<h1>Projects</h1><div class=\"column-list\">"
 
 # Pin the website to the top
-outln "Rust" "POSIX Shell" "Bottom-Up Parser" "Vanilla CSS" "Resolution Responsive" \
+outln "Rust" "Perl" "POSIX Shell" "Bottom-Up Parser" "Vanilla CSS" "Resolution Responsive" \
   | project \
   "Polygot (this site)" \
   "$( outln \
@@ -97,7 +99,7 @@ outln "Rust" "Parser" | project \
   "Commonmark + Citations" \
   "$( outln \
     "I think I found <a href=\"https://github.com/trivernis/snekdown\">Snekdown</a>." \
-    "<br /></br />" \
+    "<br /><br />" \
     "I think the web could do with a lot more source citation." \
     "Markdown facilitates lots of writing and is still one of the best balances between source-text clarity, syntax power, and publishing-format availability." \
     "BibTex on AsciiDoctor slows compilation down by a factor of 20~100x for me." \
@@ -182,7 +184,7 @@ outln "ES5 JavaScript" "Canvas" "Graphics" | project \
   "Canvas Edit" \
   "$( outln \
     "A webapp raster-graphics editor (i.e. Photoshop/Krita) that I started in the early days of the HTML5 and canvas." \
-    "Learned curve maths, vfx filter maths, and, inspired by <a href=\"https://greensock.com/\"h>GSAP</a>, I wanted to implement a game-engine loop." \
+    "Learned curve maths, vfx filter maths, and, inspired by <a href=\"https://greensock.com/\">GSAP</a>, I wanted to implement a game-engine loop." \
     "I was also doing proper prototype-based inheritance (the intended form of inheritance in JavaScript)." \
     "A rewrite with Svelte, Elm, or Rust WASM would be interesting." \
     "See also <a href=\"https://github.com/SVG-Edit/svgedit\">SVG-Edit</a>, a vector-graphics editor." \
@@ -199,7 +201,6 @@ outln "</div>"
   <footer>
 <!-- INSERT: footer -->
   </footer>
-</body>
+</div></body>
 </html>
-
 EOF
