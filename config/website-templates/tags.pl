@@ -38,7 +38,7 @@ print qq(<!DOCTYPE html>
   <link rel="stylesheet" type="text/css" media="screen" href="$DOMAIN/style.css">
 </head>
 
-<body class="structure-blog">
+<body><div class="structure-blog">
   <header>
 <!-- INSERT: navbar -->
   </header>
@@ -107,7 +107,7 @@ print "
   <footer>
 <!-- INSERT: footer -->
   </footer>
-</body>
+</div></body>
 </html>
 ";
 
